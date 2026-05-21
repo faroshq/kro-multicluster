@@ -38,6 +38,7 @@ command -v kind >/dev/null 2>&1 || { echo "Error: kind is required but not insta
 command -v kubectl >/dev/null 2>&1 || { echo "Error: kubectl is required but not installed."; exit 1; }
 command -v go >/dev/null 2>&1 || { echo "Error: go is required but not installed."; exit 1; }
 command -v docker >/dev/null 2>&1 || { echo "Error: docker is required but not installed."; exit 1; }
+command -v jq >/dev/null 2>&1 || { echo "Error: jq is required but not installed (used by test scripts to strip server-managed CRD fields)."; exit 1; }
 echo "All prerequisites met."
 echo ""
 

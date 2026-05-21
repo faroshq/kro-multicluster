@@ -174,8 +174,12 @@ section "Test 5: Sync CRD to New Cluster"
 
 NEW_CONTEXT="kind-${NEW_CLUSTER}"
 info "Copying MCWebApp CRD to new cluster..."
-kubectl --context="${HOST_CONTEXT}" get crd mcwebapps.kro.run -o yaml | \
-    kubectl --context="${NEW_CONTEXT}" apply -f -
+# Strip server-managed metadata before applying so re-runs don't trip over
+# the host CRD's resourceVersion. Server-side apply with --force-conflicts
+# also handles field-manager ownership across runs.
+kubectl --context="${HOST_CONTEXT}" get crd mcwebapps.kro.run -o json | \
+    jq 'del(.metadata.resourceVersion, .metadata.uid, .metadata.creationTimestamp, .metadata.generation, .metadata.managedFields, .status)' | \
+    kubectl --context="${NEW_CONTEXT}" apply --server-side --force-conflicts -f -
 pass "CRD synced to ${NEW_CLUSTER_LABEL}"
 
 # Create test namespace on new cluster

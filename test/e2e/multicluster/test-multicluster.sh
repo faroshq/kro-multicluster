@@ -182,8 +182,14 @@ info "Copying MCWebApp CRD from host to all consumer clusters..."
 for CONSUMER in "${CONSUMER_CLUSTERS[@]}"; do
     CONTEXT="kind-${CONSUMER}"
     LABEL="${CLUSTER_LABELS[$CONSUMER]}"
-    kubectl --context="${HOST_CONTEXT}" get crd mcwebapps.kro.run -o yaml | \
-        kubectl --context="${CONTEXT}" apply -f -
+    # Strip server-managed metadata (resourceVersion/uid/etc.) from the source
+    # CRD before applying to the consumer — otherwise a re-run hits an
+    # optimistic-concurrency conflict because the host's resourceVersion
+    # doesn't match the consumer's. Server-side apply with --force-conflicts
+    # also handles field-manager ownership across runs.
+    kubectl --context="${HOST_CONTEXT}" get crd mcwebapps.kro.run -o json | \
+        jq 'del(.metadata.resourceVersion, .metadata.uid, .metadata.creationTimestamp, .metadata.generation, .metadata.managedFields, .status)' | \
+        kubectl --context="${CONTEXT}" apply --server-side --force-conflicts -f -
     pass "CRD synced to ${LABEL}"
 done
 
