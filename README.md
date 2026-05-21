@@ -1,5 +1,28 @@
-# kro | Kube Resource Orchestrator
+# kro Multicluster Edition
 
+> [!IMPORTANT]
+> **This is an unofficial, privately maintained fork of [kubernetes-sigs/kro](https://github.com/kubernetes-sigs/kro).**
+>
+> It adds an experimental multicluster mode that lets a single kro control
+> plane reconcile instances across multiple member clusters via
+> [`sigs.k8s.io/multicluster-runtime`](https://github.com/kubernetes-sigs/multicluster-runtime).
+>
+> This fork is **not affiliated with or endorsed by the upstream kro
+> maintainers**. There are **no support, stability, or compatibility
+> guarantees** — APIs and behavior may change without notice, and breaking
+> rebases on upstream are expected. Use at your own risk; for production use
+> cases, prefer the upstream project.
+>
+> Issues and PRs specific to the multicluster work belong here. Upstream-kro
+> issues should be filed at [kubernetes-sigs/kro](https://github.com/kubernetes-sigs/kro/issues).
+
+See [docs/multicluster-setup.md](docs/multicluster-setup.md) and
+[test/e2e/multicluster/README.md](test/e2e/multicluster/README.md) for how to
+try the multicluster mode.
+
+---
+
+## kro | Kube Resource Orchestrator
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/kubernetes-sigs/kro)](https://goreportcard.com/report/github.com/kubernetes-sigs/kro)
 ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/kubernetes-sigs/kro)

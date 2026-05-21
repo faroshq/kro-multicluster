@@ -1,0 +1,106 @@
+name: multicluster-e2e
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "cmd/**"
+      - "pkg/**"
+      - "test/e2e/multicluster/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/multicluster-e2e.yaml"
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    name: kind multicluster e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      KIND_VERSION: v0.24.0
+      CONTROLLER_LOG: /tmp/kro-controller.log
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install kind
+        run: |
+          curl -fsSL -o /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          kind version
+
+      - name: Build controller
+        run: go build -o /tmp/kro-controller ./cmd/controller
+
+      - name: Set up clusters and register consumers
+        run: ./test/e2e/multicluster/setup.sh
+
+      - name: Start kro controller (multicluster mode)
+        run: |
+          set -euo pipefail
+          export KUBECONFIG="$PWD/local.kubeconfig"
+          nohup /tmp/kro-controller \
+            --enable-multicluster \
+            --cluster-secrets-namespace=kro-system \
+            --cluster-secrets-label=kro.run/cluster \
+            --metrics-bind-address=:0 \
+            --health-probe-bind-address=:0 \
+            --pprof-bind-address=:0 \
+            >"${CONTROLLER_LOG}" 2>&1 &
+          echo $! >/tmp/kro-controller.pid
+
+          # Wait for the controller to engage all three consumer clusters.
+          # Engagement is logged when the multicluster provider discovers the
+          # cluster secrets; we look for the three labels we registered.
+          for label in us-east us-west eu-central; do
+            for i in $(seq 1 60); do
+              if grep -q "Engaging cluster.*${label}\|cluster=${label}" "${CONTROLLER_LOG}"; then
+                echo "controller engaged ${label}"
+                break
+              fi
+              if ! kill -0 "$(cat /tmp/kro-controller.pid)" 2>/dev/null; then
+                echo "controller exited before engaging ${label}"
+                cat "${CONTROLLER_LOG}"
+                exit 1
+              fi
+              sleep 2
+            done
+          done
+
+      - name: Run multicluster test
+        run: ./test/e2e/multicluster/test-multicluster.sh --skip-cleanup
+
+      - name: Run add-cluster test
+        run: ./test/e2e/multicluster/test-add-cluster.sh
+
+      - name: Controller logs (always)
+        if: always()
+        run: |
+          echo "===== kro controller log ====="
+          tail -n 500 "${CONTROLLER_LOG}" || true
+
+      - name: Stop controller
+        if: always()
+        run: |
+          if [ -f /tmp/kro-controller.pid ]; then
+            kill "$(cat /tmp/kro-controller.pid)" 2>/dev/null || true
+          fi
+
+      - name: Cleanup kind clusters
+        if: always()
+        run: ./test/e2e/multicluster/cleanup.sh || true
+
+      - name: Upload controller log
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4
+        with:
+          name: kro-controller-log
+          path: ${{ env.CONTROLLER_LOG }}
+          if-no-files-found: ignore
