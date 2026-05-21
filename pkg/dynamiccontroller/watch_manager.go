@@ -86,6 +86,19 @@ func NewWatchManager(client metadata.Interface, resync time.Duration, onEvent Ev
 // EnsureWatch ensures a watch on the given GVR registered under a given owner.
 // If the informer fails to start, the owner is removed.
 func (m *WatchManager) EnsureWatch(gvr schema.GroupVersionResource, ownerID string) error {
+	return m.ensureWatch(gvr, ownerID, true)
+}
+
+// EnsureWatchNoWait is like EnsureWatch but does not block on cache sync. The
+// informer is started in the background; callers should not assume the cache
+// is populated when this returns. Used by the multicluster wrapper for remote
+// clusters where the target CRD may not yet exist — the informer keeps
+// retrying until the resource appears instead of returning a sync timeout.
+func (m *WatchManager) EnsureWatchNoWait(gvr schema.GroupVersionResource, ownerID string) error {
+	return m.ensureWatch(gvr, ownerID, false)
+}
+
+func (m *WatchManager) ensureWatch(gvr schema.GroupVersionResource, ownerID string, waitForSync bool) error {
 	m.mu.Lock()
 	if m.owners[gvr] == nil {
 		m.owners[gvr] = make(map[string]struct{})
@@ -108,8 +121,12 @@ func (m *WatchManager) EnsureWatch(gvr schema.GroupVersionResource, ownerID stri
 	metrics.DynWatchCount.Set(float64(len(m.watches)))
 	m.log.V(1).Info("Informer started", "gvr", gvr)
 
-	// Release the lock before blocking on cache sync.
+	// Release the lock before (optionally) blocking on cache sync.
 	m.mu.Unlock()
+
+	if !waitForSync {
+		return nil
+	}
 
 	// Wait for initial list/sync with a timeout so callers get a usable cache.
 	syncStart := time.Now()

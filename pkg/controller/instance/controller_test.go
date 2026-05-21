@@ -253,6 +253,7 @@ func TestReconcileGraphResolutionFailureMarksCondition(t *testing.T) {
 				clientFactory,
 				metadata.NewKROMetaLabeler(),
 				metadata.NewKROMetaLabeler(),
+				nil,
 				newControllerTestCoordinator(t),
 				record.NewFakeRecorder(100),
 			)

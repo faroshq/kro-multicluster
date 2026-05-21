@@ -214,7 +214,7 @@ func (c *Controller) deleteTarget(
 // removeFinalizer clears managed state on the instance after deletions complete.
 func (c *Controller) removeFinalizer(rcx *ReconcileContext) error {
 	// Clean up coordinator watch requests before removing the finalizer.
-	c.coordinator.RemoveInstance(c.gvr, types.NamespacedName{
+	c.coordinatorFor(rcx.ClusterName).RemoveInstance(c.gvr, types.NamespacedName{
 		Name:      rcx.Instance.GetName(),
 		Namespace: rcx.Instance.GetNamespace(),
 	})

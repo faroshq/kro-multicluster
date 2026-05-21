@@ -395,10 +395,21 @@ func (dc *DynamicController) Register(
 		return nil
 	}
 
-	// Retain the shared informer for the parent and wait for cache sync.
-	if err := dc.watches.EnsureWatch(parent, "parent"); err != nil {
+	// Retain the shared informer for the parent. By default we wait for cache
+	// sync so the caller sees a usable cache on return. The multicluster
+	// wrapper sets WaitForSync=false for remote clusters where the target CRD
+	// may not yet exist; in that mode the informer is started but we don't
+	// block on sync — it keeps retrying in the background and the watch
+	// becomes live once the resource appears.
+	var ensureErr error
+	if dc.config.WaitForSync != nil && !*dc.config.WaitForSync {
+		ensureErr = dc.watches.EnsureWatchNoWait(parent, "parent")
+	} else {
+		ensureErr = dc.watches.EnsureWatch(parent, "parent")
+	}
+	if ensureErr != nil {
 		dc.handlers.Delete(parent)
-		return fmt.Errorf("add parent handler %s: %w", parent, err)
+		return fmt.Errorf("add parent handler %s: %w", parent, ensureErr)
 	}
 
 	// Deferred cleanup on any error below.

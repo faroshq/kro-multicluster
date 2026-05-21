@@ -115,7 +115,14 @@ type Controller struct {
 	instanceLabeler      metadata.Labeler
 	childResourceLabeler metadata.Labeler
 	reconcileConfig      ReconcileConfig
-	coordinator          *dynamiccontroller.WatchCoordinator
+	// mdc is used to look up the per-cluster WatchCoordinator at reconcile
+	// time so child-resource watches are registered on the correct cluster's
+	// informers. Nil in single-cluster unit tests (in which case `coordinator`
+	// is used directly).
+	mdc *dynamiccontroller.MulticlusterDynamicController
+	// coordinator is the fallback used when mdc is nil — preserves the
+	// single-cluster code path for existing tests.
+	coordinator *dynamiccontroller.WatchCoordinator
 
 	// eventRecorder emits K8s Events on condition transitions.
 	eventRecorder record.EventRecorder
@@ -123,6 +130,18 @@ type Controller struct {
 	// feature gate flags, captured once at construction time.
 	eventsEnabled  bool
 	metricsEnabled bool
+}
+
+// coordinatorFor returns the WatchCoordinator for the given cluster. In
+// multicluster mode it looks up the per-cluster DynamicController; otherwise
+// it falls back to the controller's configured local coordinator.
+func (c *Controller) coordinatorFor(clusterName string) *dynamiccontroller.WatchCoordinator {
+	if c.mdc != nil {
+		if dc := c.mdc.GetClusterController(clusterName); dc != nil {
+			return dc.Coordinator()
+		}
+	}
+	return c.coordinator
 }
 
 // NewController constructs a new controller that resolves the newest issued
@@ -138,6 +157,7 @@ func NewController(
 	clientFactory *kroclient.ClusterClientFactory,
 	instanceLabeler metadata.Labeler,
 	childResourceLabeler metadata.Labeler,
+	mdc *dynamiccontroller.MulticlusterDynamicController,
 	coord *dynamiccontroller.WatchCoordinator,
 	eventRecorder record.EventRecorder,
 ) *Controller {
@@ -150,6 +170,7 @@ func NewController(
 		instanceLabeler:      instanceLabeler,
 		childResourceLabeler: childResourceLabeler,
 		reconcileConfig:      reconcileConfig,
+		mdc:                  mdc,
 		coordinator:          coord,
 		eventRecorder:        eventRecorder,
 		eventsEnabled:        features.FeatureGate.Enabled(features.InstanceConditionEvents),
@@ -172,8 +193,10 @@ func (c *Controller) Reconcile(ctx context.Context, clusterName string, req ctrl
 		return err
 	}
 
-	// Get per-instance watcher from the coordinator.
-	watcher := c.coordinator.ForInstance(c.gvr, req.NamespacedName)
+	// Get per-instance watcher from the cluster-specific coordinator so child
+	// resource events from this cluster route back to this instance.
+	coordinator := c.coordinatorFor(clusterName)
+	watcher := coordinator.ForInstance(c.gvr, req.NamespacedName)
 
 	start := time.Now()
 	defer func() {

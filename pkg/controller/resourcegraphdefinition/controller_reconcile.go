@@ -207,9 +207,11 @@ func (r *ResourceGraphDefinitionReconciler) setupMicroController(
 		r.clusterClientFactory,
 		instanceLabeler,
 		r.metadataLabeler,
-		// Coordinator runs on the local cluster's DynamicController. In multicluster
-		// mode child watches are still tracked there; routing across clusters is a
-		// follow-up.
+		// Pass the MulticlusterDynamicController so the instance reconciler
+		// can look up the per-cluster WatchCoordinator at reconcile time and
+		// child-resource events on remote clusters route back to the instance.
+		r.dynamicController,
+		// Fallback local coordinator (used by single-cluster unit tests).
 		r.dynamicController.GetClusterController(dynamiccontroller.LocalClusterName).Coordinator(),
 		// recorder keyed by CRD name to uniquely identify the event source
 		r.newEventRecorder(fmt.Sprintf("kro/%s-controller", processedRGD.CRD.Name)),

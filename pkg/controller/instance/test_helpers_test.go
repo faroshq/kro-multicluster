@@ -244,6 +244,7 @@ func newControllerUnderTest(t *testing.T, raw *dynamicfake.FakeDynamicClient, g 
 		clientFactory,
 		metadata.NewKROMetaLabeler(),
 		metadata.NewKROMetaLabeler(),
+		nil, // single-cluster tests don't go through a MulticlusterDynamicController
 		newControllerTestCoordinator(t),
 		record.NewFakeRecorder(100),
 	)

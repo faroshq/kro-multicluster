@@ -148,10 +148,20 @@ func (r *ResourceGraphDefinitionReconciler) SetupWithManager(mgr mcmanager.Manag
 				MaxConcurrentReconciles: r.cfg.MaxConcurrentReconciles,
 			},
 		).
-		Owns(&internalv1alpha1.GraphRevision{}).
+		// GraphRevision is an internal kro type that only exists on the local
+		// cluster — restrict both watches to local so the multicluster runtime
+		// doesn't try to engage them on provider clusters (which don't have the
+		// type registered in scheme).
+		Owns(
+			&internalv1alpha1.GraphRevision{},
+			mcbuilder.WithEngageWithLocalCluster(true),
+			mcbuilder.WithEngageWithProviderClusters(false),
+		).
 		Watches(
 			&internalv1alpha1.GraphRevision{},
 			mchandler.EnqueueRequestsFromMapFunc(r.findRGDsForGraphRevision),
+			mcbuilder.WithEngageWithLocalCluster(true),
+			mcbuilder.WithEngageWithProviderClusters(false),
 		).
 		WatchesMetadata(
 			&extv1.CustomResourceDefinition{},
