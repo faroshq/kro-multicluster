@@ -105,9 +105,9 @@ type GraphRevisionResolver interface {
 // and its sub-resources.
 // Controller owns reconciliation for instances of a ResourceGraphDefinition.
 type Controller struct {
-	log    logr.Logger
-	client kroclient.SetInterface
-	gvr    schema.GroupVersionResource
+	log           logr.Logger
+	clientFactory *kroclient.ClusterClientFactory
+	gvr           schema.GroupVersionResource
 
 	graphResolver GraphRevisionResolver
 	namespaced    bool
@@ -126,14 +126,16 @@ type Controller struct {
 }
 
 // NewController constructs a new controller that resolves the newest issued
-// graph revision for the RGD from a GraphRevisionResolver.
+// graph revision for the RGD from a GraphRevisionResolver. The clientFactory
+// provides cluster-specific clients for multicluster support; in single-cluster
+// mode it always returns the local clients.
 func NewController(
 	log logr.Logger,
 	reconcileConfig ReconcileConfig,
 	gvr schema.GroupVersionResource,
 	graphResolver GraphRevisionResolver,
 	namespaced bool,
-	client kroclient.SetInterface,
+	clientFactory *kroclient.ClusterClientFactory,
 	instanceLabeler metadata.Labeler,
 	childResourceLabeler metadata.Labeler,
 	coord *dynamiccontroller.WatchCoordinator,
@@ -141,7 +143,7 @@ func NewController(
 ) *Controller {
 	return &Controller{
 		log:                  log,
-		client:               client,
+		clientFactory:        clientFactory,
 		gvr:                  gvr,
 		graphResolver:        graphResolver,
 		namespaced:           namespaced,
@@ -156,8 +158,19 @@ func NewController(
 }
 
 // Reconcile implements the controller-runtime Reconcile interface.
-func (c *Controller) Reconcile(ctx context.Context, req ctrl.Request) (err error) {
-	log := c.log.WithValues("namespace", req.Namespace, "name", req.Name)
+// The clusterName parameter indicates which cluster the resource is from.
+// For single-cluster mode, this will be an empty string.
+func (c *Controller) Reconcile(ctx context.Context, clusterName string, req ctrl.Request) (err error) {
+	log := c.log.WithValues("namespace", req.Namespace, "name", req.Name, "cluster", clusterName)
+
+	//--------------------------------------------------------------
+	// 0. Get cluster-specific clients
+	//--------------------------------------------------------------
+	clusterClients, err := c.clientFactory.GetClients(clusterName)
+	if err != nil {
+		log.Error(err, "failed to get cluster clients")
+		return err
+	}
 
 	// Get per-instance watcher from the coordinator.
 	watcher := c.coordinator.ForInstance(c.gvr, req.NamespacedName)
@@ -177,7 +190,7 @@ func (c *Controller) Reconcile(ctx context.Context, req ctrl.Request) (err error
 	//--------------------------------------------------------------
 	// 1. Load instance; snapshot conditions for event diff
 	//--------------------------------------------------------------
-	ri := c.client.Dynamic().Resource(c.gvr)
+	ri := clusterClients.Dynamic.Resource(c.gvr)
 	var inst *unstructured.Unstructured
 	if c.namespaced {
 		inst, err = ri.Namespace(req.Namespace).Get(ctx, req.Name, metav1.GetOptions{})
@@ -225,7 +238,7 @@ func (c *Controller) Reconcile(ctx context.Context, req ctrl.Request) (err error
 		log.Error(err, "failed to resolve graph revision")
 		mark := NewConditionsMarkerFor(inst)
 		mark.GraphResolutionFailed("%v", err)
-		if statusErr := c.updateConditionsStatus(ctx, inst); statusErr != nil {
+		if statusErr := c.updateConditionsStatus(ctx, clusterName, inst); statusErr != nil {
 			log.Error(statusErr, "failed to update conditions status after graph resolution failure")
 		}
 		return err
@@ -240,10 +253,10 @@ func (c *Controller) Reconcile(ctx context.Context, req ctrl.Request) (err error
 	// 3. Build reconciliation context (clients, mapper, labeler, runtime)
 	//--------------------------------------------------------------
 	rcx = NewReconcileContext(
-		ctx, log, c.gvr,
+		ctx, log, clusterName, c.gvr,
 		c.namespaced,
-		c.client.Dynamic(),
-		c.client.RESTMapper(),
+		clusterClients.Dynamic,
+		clusterClients.RESTMapper,
 		c.childResourceLabeler,
 		runtimeObj,
 		c.reconcileConfig,

@@ -106,6 +106,11 @@ type Config struct {
 	BurstLimit int
 	// QueueShutdownTimeout is the maximum time to wait for the queue to drain before shutting down.
 	QueueShutdownTimeout time.Duration
+	// WaitForSync controls whether Register blocks on initial cache sync. The
+	// multicluster wrapper sets this to false for remote clusters where target
+	// CRDs may not yet exist; the informer keeps retrying in the background.
+	// Nil/true preserves the legacy synchronous behavior.
+	WaitForSync *bool
 }
 
 // Handler is used to actually perform the reconciliation logic for an instance GVR and will operate
@@ -163,6 +168,11 @@ type DynamicController struct {
 	handlers sync.Map // map[schema.GroupVersionResource]Handler (thread-safe on its own)
 	queue    workqueue.TypedRateLimitingInterface[ObjectIdentifiers]
 	mapper   meta.RESTMapper
+
+	// started is closed when Start has begun running. Used by WaitUntilStarted
+	// so callers (e.g. the multicluster wrapper) can sequence Register calls
+	// after the controller is live.
+	started chan struct{}
 }
 
 // NewDynamicController creates a new DynamicController.
@@ -175,9 +185,10 @@ func NewDynamicController(
 	logger := log.WithName("dynamic-controller")
 
 	dc := &DynamicController{
-		config: config,
-		log:    logger,
-		mapper: mapper,
+		config:  config,
+		log:     logger,
+		mapper:  mapper,
+		started: make(chan struct{}),
 		queue: workqueue.NewTypedRateLimitingQueueWithConfig(workqueue.NewTypedMaxOfRateLimiter(
 			workqueue.NewTypedItemExponentialFailureRateLimiter[ObjectIdentifiers](config.MinRetryDelay, config.MaxRetryDelay),
 			&workqueue.TypedBucketRateLimiter[ObjectIdentifiers]{Limiter: rate.NewLimiter(rate.Limit(config.RateLimit), config.BurstLimit)},
@@ -198,6 +209,7 @@ func (dc *DynamicController) Start(ctx context.Context) error {
 	if !dc.ctx.CompareAndSwap(nil, &ctx) {
 		return fmt.Errorf("already running")
 	}
+	close(dc.started)
 
 	defer utilruntime.HandleCrash()
 
@@ -211,6 +223,33 @@ func (dc *DynamicController) Start(ctx context.Context) error {
 
 	<-ctx.Done()
 	return dc.gracefulShutdown()
+}
+
+// WaitUntilStarted blocks until Start has begun (or ctx is cancelled). Used by
+// the multicluster wrapper to sequence Register calls behind Start, since
+// Register requires a live run context.
+func (dc *DynamicController) WaitUntilStarted(ctx context.Context) error {
+	select {
+	case <-dc.started:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// RegisterWithGVK is a compatibility wrapper around Register for the
+// multicluster controller. The new watch architecture discovers child GVRs
+// dynamically via the WatchCoordinator from instance Watch() calls, so the
+// parentGVK and resourceGVRsToWatch arguments are accepted for API
+// compatibility but not used to pre-register child watches.
+func (dc *DynamicController) RegisterWithGVK(
+	ctx context.Context,
+	parent schema.GroupVersionResource,
+	_ schema.GroupVersionKind,
+	handler Handler,
+	_ ...schema.GroupVersionResource,
+) error {
+	return dc.Register(ctx, parent, handler)
 }
 
 // Coordinator returns the WatchCoordinator for use by instance controllers.

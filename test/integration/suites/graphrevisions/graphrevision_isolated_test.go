@@ -260,7 +260,7 @@ var _ = Describe("GraphRevision Integration", Serial, func() {
 			g.Expect(gvs[0].Spec.Revision).To(Equal(int64(1)))
 
 			selected := &internalv1alpha1.GraphRevisionList{}
-			err = testEnv.CtrlManager.GetAPIReader().List(ctx, selected, client.MatchingFields{
+			err = testEnv.CtrlManager.GetLocalManager().GetAPIReader().List(ctx, selected, client.MatchingFields{
 				"spec.snapshot.name": rgdName,
 			})
 			g.Expect(err).ToNot(HaveOccurred())
@@ -281,7 +281,7 @@ var _ = Describe("GraphRevision Integration", Serial, func() {
 			g.Expect(maxGraphRevisionNumber(gvs)).To(Equal(int64(1)))
 
 			selected := &internalv1alpha1.GraphRevisionList{}
-			err = testEnv.CtrlManager.GetAPIReader().List(ctx, selected, client.MatchingFields{
+			err = testEnv.CtrlManager.GetLocalManager().GetAPIReader().List(ctx, selected, client.MatchingFields{
 				"spec.snapshot.name": rgdName,
 			})
 			g.Expect(err).ToNot(HaveOccurred())

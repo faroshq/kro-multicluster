@@ -75,12 +75,12 @@ func TestShutdownResourceGraphDefinitionMicroController(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := newTestRGD("shutdown")
 			gvr := metadata.GetResourceGraphDefinitionInstanceGVR(rgd.Spec.Schema.Group, rgd.Spec.Schema.APIVersion, rgd.Spec.Schema.Kind)
-			dc := newRunningDynamicController(t)
+			mdc, dc := newRunningMulticlusterDynamicController(t)
 			if tt.register {
 				require.NoError(t, dc.Register(context.Background(), gvr, func(context.Context, ctrl.Request) error { return nil }))
 			}
 
-			reconciler := &ResourceGraphDefinitionReconciler{dynamicController: dc}
+			reconciler := &ResourceGraphDefinitionReconciler{dynamicController: mdc}
 			require.NoError(t, reconciler.shutdownResourceGraphDefinitionMicroController(context.Background(), &gvr))
 		})
 	}
@@ -115,7 +115,7 @@ func TestCleanupResourceGraphDefinition(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := newTestRGD("cleanup")
 			gvr := metadata.GetResourceGraphDefinitionInstanceGVR(rgd.Spec.Schema.Group, rgd.Spec.Schema.APIVersion, rgd.Spec.Schema.Kind)
-			dc := newRunningDynamicController(t)
+			mdc, dc := newRunningMulticlusterDynamicController(t)
 			require.NoError(t, dc.Register(context.Background(), gvr, func(context.Context, ctrl.Request) error { return nil }))
 
 			// Set up CRD with ownership label
@@ -126,7 +126,7 @@ func TestCleanupResourceGraphDefinition(t *testing.T) {
 			}
 			reconciler := &ResourceGraphDefinitionReconciler{
 				cfg:               Config{AllowCRDDeletion: tt.allowCRDDeletion},
-				dynamicController: dc,
+				dynamicController: mdc,
 				crdManager:        manager,
 				revisionsRegistry: revisions.NewRegistry(),
 			}
@@ -167,10 +167,10 @@ func TestCleanupSkipsDeregisterWhenNeverRegistered(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := newTestRGD("skip-cleanup")
 			gvr := metadata.GetResourceGraphDefinitionInstanceGVR(rgd.Spec.Schema.Group, rgd.Spec.Schema.APIVersion, rgd.Spec.Schema.Kind)
-			dc := newRunningDynamicController(t)
+			mdc, dc := newRunningMulticlusterDynamicController(t)
 
 			reconciler := &ResourceGraphDefinitionReconciler{
-				dynamicController: dc,
+				dynamicController: mdc,
 				crdManager:        &stubCRDManager{},
 				revisionsRegistry: revisions.NewRegistry(),
 			}
@@ -188,7 +188,7 @@ func TestCleanupSkipsDeregisterWhenNeverRegistered(t *testing.T) {
 func TestCleanupPreservesRegistryEntries(t *testing.T) {
 	rgd := newTestRGD("evict")
 	gvr := metadata.GetResourceGraphDefinitionInstanceGVR(rgd.Spec.Schema.Group, rgd.Spec.Schema.APIVersion, rgd.Spec.Schema.Kind)
-	dc := newRunningDynamicController(t)
+	mdc, dc := newRunningMulticlusterDynamicController(t)
 	require.NoError(t, dc.Register(context.Background(), gvr, func(context.Context, ctrl.Request) error { return nil }))
 
 	registry := revisions.NewRegistry()
@@ -197,7 +197,7 @@ func TestCleanupPreservesRegistryEntries(t *testing.T) {
 	registry.Put(revisions.Entry{RGDName: "other-rgd", Revision: 1, SpecHash: "ccc", State: revisions.RevisionStateActive})
 
 	reconciler := &ResourceGraphDefinitionReconciler{
-		dynamicController: dc,
+		dynamicController: mdc,
 		crdManager:        &stubCRDManager{},
 		revisionsRegistry: registry,
 	}

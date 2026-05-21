@@ -33,6 +33,10 @@ type ReconcileContext struct {
 	Ctx context.Context
 	Log logr.Logger
 
+	// ClusterName identifies which cluster this reconciliation is for.
+	// Empty string indicates the local/host cluster.
+	ClusterName string
+
 	GVR        schema.GroupVersionResource
 	Namespaced bool
 	Client     dynamic.Interface
@@ -53,7 +57,8 @@ type ReconcileContext struct {
 
 // NewReconcileContext constructs a ReconcileContext for a single reconciliation cycle.
 // It bundles all dependencies needed to reconcile an instance's resources:
-//   - client/restMapper: for Kubernetes API operations
+//   - clusterName: identifies which cluster this reconciliation is for (empty for local)
+//   - client/restMapper: for Kubernetes API operations on the target cluster
 //   - labeler: for applying kro metadata labels to resources
 //   - rt: the runtime containing resolved resource templates, and helpers to figure out
 //     readiness, inclusion etc...
@@ -63,6 +68,7 @@ type ReconcileContext struct {
 func NewReconcileContext(
 	ctx context.Context,
 	log logr.Logger,
+	clusterName string,
 	gvr schema.GroupVersionResource,
 	namespaced bool,
 	client dynamic.Interface,
@@ -75,6 +81,7 @@ func NewReconcileContext(
 	return &ReconcileContext{
 		Ctx:          ctx,
 		Log:          log,
+		ClusterName:  clusterName,
 		GVR:          gvr,
 		Namespaced:   namespaced,
 		Client:       client,

@@ -26,6 +26,7 @@ import (
 
 	v1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -33,6 +34,7 @@ import (
 	internalv1alpha1 "github.com/kubernetes-sigs/kro/api/internal.kro.run/v1alpha1"
 	"github.com/kubernetes-sigs/kro/api/v1alpha1"
 	instancectrl "github.com/kubernetes-sigs/kro/pkg/controller/instance"
+	"github.com/kubernetes-sigs/kro/pkg/dynamiccontroller"
 	"github.com/kubernetes-sigs/kro/pkg/graph"
 	graphhash "github.com/kubernetes-sigs/kro/pkg/graph/hash"
 	"github.com/kubernetes-sigs/kro/pkg/graph/revisions"
@@ -202,10 +204,13 @@ func (r *ResourceGraphDefinitionReconciler) setupMicroController(
 		gvr,
 		r.revisionsRegistry.ResolverForRGD(rgd.Name),
 		processedRGD.Instance.Meta.Namespaced,
-		r.clientSet,
+		r.clusterClientFactory,
 		instanceLabeler,
 		r.metadataLabeler,
-		r.dynamicController.Coordinator(),
+		// Coordinator runs on the local cluster's DynamicController. In multicluster
+		// mode child watches are still tracked there; routing across clusters is a
+		// follow-up.
+		r.dynamicController.GetClusterController(dynamiccontroller.LocalClusterName).Coordinator(),
 		// recorder keyed by CRD name to uniquely identify the event source
 		r.newEventRecorder(fmt.Sprintf("kro/%s-controller", processedRGD.CRD.Name)),
 	)
@@ -355,7 +360,15 @@ func (r *ResourceGraphDefinitionReconciler) ensureResourceGraphDefinitionControl
 	ctrl.LoggerFrom(ctx).V(1).Info("reconciling resource graph definition micro controller")
 	gvr := processedRGD.Instance.Meta.GVR
 
-	err := r.dynamicController.Register(ctx, gvr, controller.Reconcile)
+	// Pass the GVK explicitly so remote clusters that don't yet have the CRD
+	// can still have their watch wired up — the local mapper can't look it up.
+	gvk := schema.GroupVersionKind{
+		Group:   gvr.Group,
+		Version: gvr.Version,
+		Kind:    processedRGD.CRD.Spec.Names.Kind,
+	}
+
+	err := r.dynamicController.Register(ctx, gvr, gvk, controller.Reconcile)
 	if err != nil {
 		return newMicroControllerError(err)
 	}

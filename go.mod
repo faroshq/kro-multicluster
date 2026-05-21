@@ -29,6 +29,8 @@ require (
 	sigs.k8s.io/release-utils v0.12.3
 )
 
+require sigs.k8s.io/multicluster-runtime v0.23.1
+
 require (
 	cel.dev/expr v0.25.1 // indirect
 	github.com/B1NARY-GR0UP/nwa v0.5.2 // indirect
@@ -110,3 +112,5 @@ tool (
 	github.com/B1NARY-GR0UP/nwa
 	github.com/onsi/ginkgo/v2/ginkgo
 )
+
+// replace sigs.k8s.io/multicluster-runtime => ../../sigs.k8s.io/multicluster-runtime

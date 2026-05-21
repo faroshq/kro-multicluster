@@ -42,6 +42,7 @@ import (
 	"github.com/kubernetes-sigs/kro/pkg/graph"
 	"github.com/kubernetes-sigs/kro/pkg/graph/revisions"
 	"github.com/kubernetes-sigs/kro/pkg/metrics"
+	"github.com/kubernetes-sigs/kro/pkg/multicluster"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -94,6 +95,11 @@ func main() {
 		leaderElectionRenewDeadline   time.Duration
 		leaderElectionRetryPeriod     time.Duration
 		featureGatesFlag              string
+		// multicluster parameters
+		enableMulticluster       bool
+		clusterSecretsNamespace  string
+		clusterSecretsLabel      string
+		clusterSecretsKubeconfig string
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8078", "The address the metric endpoint binds to.")
@@ -171,6 +177,16 @@ func main() {
 	flag.DurationVar(&leaderElectionRetryPeriod, "leader-election-retry-period", 2*time.Second,
 		"Duration between each leader election action.")
 
+	// multicluster flags
+	flag.BoolVar(&enableMulticluster, "enable-multicluster", false,
+		"Enable multicluster mode. When enabled, KRO will discover and manage resources across multiple clusters.")
+	flag.StringVar(&clusterSecretsNamespace, "cluster-secrets-namespace", "kro-system",
+		"Namespace where cluster kubeconfig secrets are stored (only used when --enable-multicluster is set)")
+	flag.StringVar(&clusterSecretsLabel, "cluster-secrets-label", "kro.run/cluster",
+		"Label used to identify secrets containing kubeconfig data (only used when --enable-multicluster is set)")
+	flag.StringVar(&clusterSecretsKubeconfig, "cluster-secrets-key", "kubeconfig",
+		"Key in the secret data that contains the kubeconfig (only used when --enable-multicluster is set)")
+
 	opts := zap.Options{
 		Development: true,
 	}
@@ -204,7 +220,28 @@ func main() {
 	}
 	restConfig := set.RESTConfig()
 
-	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
+	// Configure multicluster provider if enabled
+	var mcProvider *multicluster.Provider
+	if enableMulticluster {
+		setupLog.Info("Multicluster mode enabled",
+			"namespace", clusterSecretsNamespace,
+			"label", clusterSecretsLabel,
+			"key", clusterSecretsKubeconfig)
+
+		mcProvider, err = multicluster.NewProvider(multicluster.Options{
+			Type:                  multicluster.ProviderTypeKubeconfig,
+			KubeconfigNamespace:   clusterSecretsNamespace,
+			KubeconfigSecretLabel: clusterSecretsLabel,
+			KubeconfigSecretKey:   clusterSecretsKubeconfig,
+		})
+		if err != nil {
+			setupLog.Error(err, "unable to create multicluster provider")
+			os.Exit(1)
+		}
+	}
+
+	// Create the manager (single-cluster or multi-cluster based on configuration)
+	mcMgr, err := multicluster.NewManager(restConfig, mcProvider, ctrl.Options{
 		Scheme: scheme,
 		Metrics: metricsserver.Options{
 			BindAddress: metricsAddr,
@@ -242,7 +279,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	dc := dynamiccontroller.NewDynamicController(rootLogger, dynamiccontroller.Config{
+	// Get the local manager for components that need it
+	mgr := mcMgr.GetLocalManager()
+
+	dc := dynamiccontroller.NewMulticlusterDynamicController(rootLogger, dynamiccontroller.Config{
 		Workers:         dynamicControllerConcurrentReconciles,
 		ResyncPeriod:    time.Duration(resyncPeriod) * time.Second,
 		QueueMaxRetries: queueMaxRetries,
@@ -251,6 +291,13 @@ func main() {
 		RateLimit:       rateLimit,
 		BurstLimit:      burstLimit,
 	}, set.Metadata(), set.RESTMapper())
+
+	// Create cluster client factory for multicluster instance operations
+	clusterClientFactory := kroclient.NewClusterClientFactory(
+		rootLogger,
+		set.Dynamic(),
+		set.RESTMapper(),
+	)
 
 	resourceGraphDefinitionGraphBuilder, err := graph.NewBuilder(restConfig, set.HTTPClient())
 	if err != nil {
@@ -261,6 +308,7 @@ func main() {
 
 	rgd := resourcegraphdefinitionctrl.NewResourceGraphDefinitionReconciler(
 		set,
+		clusterClientFactory,
 		dc,
 		resourceGraphDefinitionGraphBuilder,
 		graphRevisionRegistry,
@@ -276,7 +324,7 @@ func main() {
 			},
 		},
 	)
-	if err := rgd.SetupWithManager(mgr); err != nil {
+	if err := rgd.SetupWithManager(mcMgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ResourceGraphDefinition")
 		os.Exit(1)
 	}
@@ -295,8 +343,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := mgr.Add(dc); err != nil {
+	// The MulticlusterDynamicController implements multicluster.Aware,
+	// so it will receive Engage calls when new clusters are discovered.
+	if err := mcMgr.Add(dc); err != nil {
 		setupLog.Error(err, "unable to add dynamic controller to manager")
+		os.Exit(1)
+	}
+
+	// Add cluster client factory to the multicluster manager
+	// so it receives Engage calls and creates cluster-specific clients.
+	if err := mcMgr.Add(clusterClientFactory); err != nil {
+		setupLog.Error(err, "unable to add cluster client factory to manager")
 		os.Exit(1)
 	}
 
@@ -312,7 +369,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mcMgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}

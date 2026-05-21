@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/kubernetes-sigs/kro/api/v1alpha1"
+	kroclient "github.com/kubernetes-sigs/kro/pkg/client"
 	clientfake "github.com/kubernetes-sigs/kro/pkg/client/fake"
 	"github.com/kubernetes-sigs/kro/pkg/graph"
 	"github.com/kubernetes-sigs/kro/pkg/graph/revisions"
@@ -135,7 +136,7 @@ func TestReconcileInstanceLoad(t *testing.T) {
 			}
 
 			controller, _ := newControllerUnderTest(t, raw, newTestGraph())
-			err := controller.Reconcile(context.Background(), ctrl.Request{NamespacedName: tt.request})
+			err := controller.Reconcile(context.Background(), "", ctrl.Request{NamespacedName: tt.request})
 
 			if tt.wantErr == "" {
 				require.NoError(t, err)
@@ -170,7 +171,7 @@ func TestReconcileStatusPaths(t *testing.T) {
 
 			raw := newControllerTestDynamicClient(t, instance.DeepCopy())
 			controller, _ := newControllerUnderTest(t, raw, newTestGraph())
-			err := controller.Reconcile(context.Background(), ctrl.Request{
+			err := controller.Reconcile(context.Background(), "", ctrl.Request{
 				NamespacedName: types.NamespacedName{Name: instance.GetName(), Namespace: instance.GetNamespace()},
 			})
 			require.NoError(t, err)
@@ -230,6 +231,12 @@ func TestReconcileGraphResolutionFailureMarksCondition(t *testing.T) {
 			clientSet := clientfake.NewFakeSet(raw)
 			clientSet.SetRESTMapper(buildControllerTestRESTMapper())
 
+			clientFactory := kroclient.NewClusterClientFactory(
+				zap.New(zap.UseDevMode(true)),
+				clientSet.Dynamic(),
+				clientSet.RESTMapper(),
+			)
+
 			controller := NewController(
 				zap.New(zap.UseDevMode(true)),
 				ReconcileConfig{DefaultRequeueDuration: 2 * time.Second},
@@ -243,14 +250,14 @@ func TestReconcileGraphResolutionFailureMarksCondition(t *testing.T) {
 					},
 				},
 				true,
-				clientSet,
+				clientFactory,
 				metadata.NewKROMetaLabeler(),
 				metadata.NewKROMetaLabeler(),
 				newControllerTestCoordinator(t),
 				record.NewFakeRecorder(100),
 			)
 
-			err := controller.Reconcile(context.Background(), ctrl.Request{
+			err := controller.Reconcile(context.Background(), "", ctrl.Request{
 				NamespacedName: types.NamespacedName{Name: "demo", Namespace: "default"},
 			})
 			require.Error(t, err)
@@ -288,7 +295,7 @@ func TestReconcileDeletionRemovesFinalizer(t *testing.T) {
 	raw := newControllerTestDynamicClient(t, instance.DeepCopy())
 	controller, _ := newControllerUnderTest(t, raw, newTestGraph())
 
-	err := controller.Reconcile(context.Background(), ctrl.Request{
+	err := controller.Reconcile(context.Background(), "", ctrl.Request{
 		NamespacedName: types.NamespacedName{Name: instance.GetName(), Namespace: instance.GetNamespace()},
 	})
 	require.NoError(t, err)
@@ -313,7 +320,7 @@ func TestReconcileResourceMutationRequestsRequeue(t *testing.T) {
 	raw := newControllerTestDynamicClient(t, instance.DeepCopy())
 	controller, _ := newControllerUnderTest(t, raw, newTestGraph(resourceNode))
 
-	err := controller.Reconcile(context.Background(), ctrl.Request{
+	err := controller.Reconcile(context.Background(), "", ctrl.Request{
 		NamespacedName: types.NamespacedName{Name: instance.GetName(), Namespace: instance.GetNamespace()},
 	})
 	var retryAfter *requeue.RequeueNeededAfter
@@ -380,7 +387,7 @@ func TestReconcileTerminatingManagedResourcesSetDeletingStatus(t *testing.T) {
 			raw := newControllerTestDynamicClient(t, args...)
 			controller, _ := newControllerUnderTest(t, raw, tt.graph)
 
-			err := controller.Reconcile(context.Background(), ctrl.Request{
+			err := controller.Reconcile(context.Background(), "", ctrl.Request{
 				NamespacedName: types.NamespacedName{Name: instance.GetName(), Namespace: instance.GetNamespace()},
 			})
 			var retryAfter *requeue.RequeueNeededAfter
@@ -410,7 +417,7 @@ func TestReconcileManagedStateFailureMarksStatus(t *testing.T) {
 	})
 
 	controller, _ := newControllerUnderTest(t, raw, newTestGraph())
-	err := controller.Reconcile(context.Background(), ctrl.Request{
+	err := controller.Reconcile(context.Background(), "", ctrl.Request{
 		NamespacedName: types.NamespacedName{Name: instance.GetName(), Namespace: instance.GetNamespace()},
 	})
 	require.Error(t, err)

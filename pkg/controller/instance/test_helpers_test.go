@@ -41,6 +41,7 @@ import (
 
 	"github.com/kubernetes-sigs/kro/api/v1alpha1"
 	krocel "github.com/kubernetes-sigs/kro/pkg/cel"
+	kroclient "github.com/kubernetes-sigs/kro/pkg/client"
 	clientfake "github.com/kubernetes-sigs/kro/pkg/client/fake"
 	"github.com/kubernetes-sigs/kro/pkg/controller/instance/applyset"
 	"github.com/kubernetes-sigs/kro/pkg/dynamiccontroller"
@@ -222,6 +223,12 @@ func newControllerUnderTest(t *testing.T, raw *dynamicfake.FakeDynamicClient, g 
 		CompiledGraph: g,
 	})
 
+	clientFactory := kroclient.NewClusterClientFactory(
+		zap.New(zap.UseDevMode(true)),
+		clientSet.Dynamic(),
+		clientSet.RESTMapper(),
+	)
+
 	controller := NewController(
 		zap.New(zap.UseDevMode(true)),
 		ReconcileConfig{
@@ -234,7 +241,7 @@ func newControllerUnderTest(t *testing.T, raw *dynamicfake.FakeDynamicClient, g 
 		controllerTestParentGVR,
 		registry.ResolverForRGD(controllerTestParentGVR.Resource),
 		true,
-		clientSet,
+		clientFactory,
 		metadata.NewKROMetaLabeler(),
 		metadata.NewKROMetaLabeler(),
 		newControllerTestCoordinator(t),
@@ -263,6 +270,7 @@ func newControllerAndContext(
 	rcx := NewReconcileContext(
 		context.Background(),
 		controller.log,
+		"",
 		controllerTestParentGVR,
 		namespaced,
 		clientSet.Dynamic(),

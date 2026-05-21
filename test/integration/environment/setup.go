@@ -41,6 +41,7 @@ import (
 	"github.com/kubernetes-sigs/kro/pkg/dynamiccontroller"
 	"github.com/kubernetes-sigs/kro/pkg/graph"
 	"github.com/kubernetes-sigs/kro/pkg/graph/revisions"
+	"github.com/kubernetes-sigs/kro/pkg/multicluster"
 )
 
 type Environment struct {
@@ -50,7 +51,7 @@ type Environment struct {
 	ControllerConfig ControllerConfig
 	Client           client.Client
 	TestEnv          *envtest.Environment
-	CtrlManager      ctrl.Manager
+	CtrlManager      multicluster.Manager
 	ClientSet        *kroclient.Set
 	CRDManager       kroclient.CRDClient
 	GraphBuilder     *graph.Builder
@@ -180,7 +181,9 @@ func (e *Environment) setupController() error {
 		maxGraphRevisions = 20
 	}
 
-	e.CtrlManager, err = ctrl.NewManager(e.ClientSet.RESTConfig(), ctrl.Options{
+	// Wrap with the kro multicluster manager. nil provider = single-cluster mode,
+	// which is what integration tests use.
+	e.CtrlManager, err = multicluster.NewManager(e.ClientSet.RESTConfig(), nil, ctrl.Options{
 		Scheme: scheme.Scheme,
 		Controller: config.Controller{
 			SkipNameValidation: new(true),
@@ -194,10 +197,12 @@ func (e *Environment) setupController() error {
 	if err != nil {
 		return fmt.Errorf("creating manager: %w", err)
 	}
-	e.ClientSet.SetRESTMapper(e.CtrlManager.GetRESTMapper())
+	e.ClientSet.SetRESTMapper(e.CtrlManager.GetLocalManager().GetRESTMapper())
 
-	dc := dynamiccontroller.NewDynamicController(
-		zap.New(zap.WriteTo(e.ControllerConfig.LogWriter), zap.UseDevMode(true)),
+	logger := zap.New(zap.WriteTo(e.ControllerConfig.LogWriter), zap.UseDevMode(true))
+
+	dc := dynamiccontroller.NewMulticlusterDynamicController(
+		logger,
 		dynamiccontroller.Config{
 			Workers:         40,
 			ResyncPeriod:    0, // disabled resync
@@ -209,9 +214,18 @@ func (e *Environment) setupController() error {
 		},
 		e.ClientSet.Metadata(), e.ClientSet.RESTMapper())
 
+	// Cluster client factory provides per-cluster clients. In single-cluster
+	// mode it always serves the local clients.
+	clusterClientFactory := kroclient.NewClusterClientFactory(
+		logger,
+		e.ClientSet.Dynamic(),
+		e.ClientSet.RESTMapper(),
+	)
+
 	graphRevisionRegistry := revisions.NewRegistry()
 	rgReconciler := ctrlresourcegraphdefinition.NewResourceGraphDefinitionReconciler(
 		e.ClientSet,
+		clusterClientFactory,
 		dc,
 		e.GraphBuilder,
 		graphRevisionRegistry,
@@ -231,14 +245,22 @@ func (e *Environment) setupController() error {
 		rgdConfig,
 	)
 
+	// Add multicluster dynamic controller to the multicluster manager
+	// so it can receive Engage calls when new clusters are discovered.
 	if err := e.CtrlManager.Add(dc); err != nil {
 		return fmt.Errorf("adding dynamic controller to manager: %w", err)
+	}
+
+	// Add cluster client factory to the multicluster manager
+	// so it receives Engage calls and creates cluster-specific clients.
+	if err := e.CtrlManager.Add(clusterClientFactory); err != nil {
+		return fmt.Errorf("adding cluster client factory to manager: %w", err)
 	}
 
 	if err = rgReconciler.SetupWithManager(e.CtrlManager); err != nil {
 		return fmt.Errorf("setting up reconciler: %w", err)
 	}
-	if err = gvReconciler.SetupWithManager(e.CtrlManager); err != nil {
+	if err = gvReconciler.SetupWithManager(e.CtrlManager.GetLocalManager()); err != nil {
 		return fmt.Errorf("setting up graph revision reconciler: %w", err)
 	}
 

@@ -22,17 +22,20 @@ import (
 
 	"github.com/go-logr/logr"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlrtcontroller "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
+	mchandler "sigs.k8s.io/multicluster-runtime/pkg/handler"
+	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
+	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 
 	internalv1alpha1 "github.com/kubernetes-sigs/kro/api/internal.kro.run/v1alpha1"
 	"github.com/kubernetes-sigs/kro/api/v1alpha1"
@@ -67,9 +70,10 @@ type ResourceGraphDefinitionReconciler struct {
 
 	clientSet             kroclient.SetInterface
 	crdManager            kroclient.CRDClient
+	clusterClientFactory  *kroclient.ClusterClientFactory
 	metadataLabeler       metadata.Labeler
 	rgBuilder             resourceGraphBuilder
-	dynamicController     *dynamiccontroller.DynamicController
+	dynamicController     *dynamiccontroller.MulticlusterDynamicController
 	revisionsRegistry     *revisions.Registry
 	registeredControllers sync.Map
 	cfg                   Config
@@ -79,7 +83,8 @@ type ResourceGraphDefinitionReconciler struct {
 
 func NewResourceGraphDefinitionReconciler(
 	clientSet kroclient.SetInterface,
-	dynamicController *dynamiccontroller.DynamicController,
+	clusterClientFactory *kroclient.ClusterClientFactory,
+	dynamicController *dynamiccontroller.MulticlusterDynamicController,
 	builder *graph.Builder,
 	revisionsRegistry *revisions.Registry,
 	cfg Config,
@@ -87,43 +92,50 @@ func NewResourceGraphDefinitionReconciler(
 	crdWrapper := clientSet.CRD(kroclient.CRDWrapperConfig{})
 
 	return &ResourceGraphDefinitionReconciler{
-		clientSet:         clientSet,
-		crdManager:        crdWrapper,
-		dynamicController: dynamicController,
-		revisionsRegistry: revisionsRegistry,
-		metadataLabeler:   metadata.NewKROMetaLabeler(),
-		rgBuilder:         builder,
-		cfg:               cfg,
+		clientSet:            clientSet,
+		clusterClientFactory: clusterClientFactory,
+		crdManager:           crdWrapper,
+		dynamicController:    dynamicController,
+		revisionsRegistry:    revisionsRegistry,
+		metadataLabeler:      metadata.NewKROMetaLabeler(),
+		rgBuilder:            builder,
+		cfg:                  cfg,
 	}
 }
 
-// SetupWithManager sets up the controller with the Manager.
-func (r *ResourceGraphDefinitionReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.Client = mgr.GetClient()
+// SetupWithManager sets up the controller with the multicluster Manager.
+// The RGD controller only watches resources on the local/host cluster since
+// ResourceGraphDefinitions are cluster-scoped control plane resources.
+func (r *ResourceGraphDefinitionReconciler) SetupWithManager(mgr mcmanager.Manager) error {
+	localMgr := mgr.GetLocalManager()
+	r.Client = localMgr.GetClient()
 	// GraphRevision selection relies on a CRD selectable field, so use the
 	// direct API reader instead of a cache-only field index.
-	r.apiReader = mgr.GetAPIReader()
-	r.clientSet.SetRESTMapper(mgr.GetRESTMapper())
-	r.instanceLogger = mgr.GetLogger()
-	r.newEventRecorder = mgr.GetEventRecorderFor
+	r.apiReader = localMgr.GetAPIReader()
+	r.clientSet.SetRESTMapper(localMgr.GetRESTMapper())
+	r.instanceLogger = localMgr.GetLogger()
+	r.newEventRecorder = localMgr.GetEventRecorderFor
 
-	logConstructor := func(req *reconcile.Request) logr.Logger {
-		log := mgr.GetLogger().WithName("rgd-controller").WithValues(
+	logConstructor := func(req *mcreconcile.Request) logr.Logger {
+		log := localMgr.GetLogger().WithName("rgd-controller").WithValues(
 			"controller", "ResourceGraphDefinition",
 			"controllerGroup", v1alpha1.GroupVersion.Group,
 			"controllerKind", "ResourceGraphDefinition",
 		)
 		if req != nil {
-			log = log.WithValues("name", req.Name)
+			log = log.WithValues("name", req.Name, "cluster", req.ClusterName)
 		}
 		return log
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
+	// RGDs only exist on the local/host cluster.
+	return mcbuilder.ControllerManagedBy(mgr).
 		Named("ResourceGraphDefinition").
 		For(
 			&v1alpha1.ResourceGraphDefinition{},
-			builder.WithPredicates(
+			mcbuilder.WithEngageWithLocalCluster(true),
+			mcbuilder.WithEngageWithProviderClusters(false),
+			mcbuilder.WithPredicates(
 				predicate.Or(
 					resourceGraphDefinitionPrimaryWatchPredicate(),
 					annotationChangedPredicate(),
@@ -131,7 +143,7 @@ func (r *ResourceGraphDefinitionReconciler) SetupWithManager(mgr ctrl.Manager) e
 			),
 		).
 		WithOptions(
-			ctrlrtcontroller.Options{
+			ctrlrtcontroller.TypedOptions[mcreconcile.Request]{
 				LogConstructor:          logConstructor,
 				MaxConcurrentReconciles: r.cfg.MaxConcurrentReconciles,
 			},
@@ -139,12 +151,14 @@ func (r *ResourceGraphDefinitionReconciler) SetupWithManager(mgr ctrl.Manager) e
 		Owns(&internalv1alpha1.GraphRevision{}).
 		Watches(
 			&internalv1alpha1.GraphRevision{},
-			handler.EnqueueRequestsFromMapFunc(r.findRGDsForGraphRevision),
+			mchandler.EnqueueRequestsFromMapFunc(r.findRGDsForGraphRevision),
 		).
 		WatchesMetadata(
 			&extv1.CustomResourceDefinition{},
-			handler.EnqueueRequestsFromMapFunc(r.findRGDsForCRD),
-			builder.WithPredicates(predicate.Funcs{
+			mchandler.EnqueueRequestsFromMapFunc(r.findRGDsForCRD),
+			mcbuilder.WithEngageWithLocalCluster(true),
+			mcbuilder.WithEngageWithProviderClusters(false),
+			mcbuilder.WithPredicates(predicate.Funcs{
 				UpdateFunc: func(e event.UpdateEvent) bool {
 					return true
 				},
@@ -156,7 +170,7 @@ func (r *ResourceGraphDefinitionReconciler) SetupWithManager(mgr ctrl.Manager) e
 				},
 			}),
 		).
-		Complete(reconcile.AsReconciler[*v1alpha1.ResourceGraphDefinition](mgr.GetClient(), r))
+		Complete(reconcile.TypedFunc[mcreconcile.Request](r.Reconcile))
 }
 
 // resourceGraphDefinitionPrimaryWatchPredicate returns a predicate that decides
@@ -259,10 +273,23 @@ func (r *ResourceGraphDefinitionReconciler) findRGDsForGraphRevision(_ context.C
 	}
 }
 
+// Reconcile handles the reconciliation of a ResourceGraphDefinition.
+// It accepts a multicluster Request which includes the cluster name,
+// though for RGDs the cluster will always be the local cluster.
 func (r *ResourceGraphDefinitionReconciler) Reconcile(
 	ctx context.Context,
-	o *v1alpha1.ResourceGraphDefinition,
+	req mcreconcile.Request,
 ) (ctrl.Result, error) {
+	// Fetch the ResourceGraphDefinition from the local cluster
+	o := &v1alpha1.ResourceGraphDefinition{}
+	if err := r.Client.Get(ctx, req.NamespacedName, o); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Object not found, likely deleted
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
+
 	if !o.DeletionTimestamp.IsZero() {
 		startTime := time.Now()
 		if err := r.cleanupResourceGraphDefinition(ctx, o); err != nil {

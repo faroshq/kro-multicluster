@@ -129,9 +129,14 @@ func (m *ConditionsMarker) ResourcesUnderDeletion(msg string, args ...any) {
 
 // updateConditionsStatus persists only the conditions and state from the
 // instance object. Used on early-exit paths (e.g. graph resolution failure)
-// where a full ReconcileContext is not available.
-func (c *Controller) updateConditionsStatus(ctx context.Context, inst *unstructured.Unstructured) error {
-	ri := c.client.Dynamic().Resource(c.gvr)
+// where a full ReconcileContext is not available. clusterName routes the
+// status write to the correct cluster (empty string = local).
+func (c *Controller) updateConditionsStatus(ctx context.Context, clusterName string, inst *unstructured.Unstructured) error {
+	clusterClients, err := c.clientFactory.GetClients(clusterName)
+	if err != nil {
+		return err
+	}
+	ri := clusterClients.Dynamic.Resource(c.gvr)
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var cur *unstructured.Unstructured
 		var err error
