@@ -5,6 +5,10 @@ on:
   workflow_dispatch:
 jobs:
   postsubmit:
+    # Upstream-only: hydrates the public Go proxy with the upstream
+    # kubernetes-sigs/kro module at this commit SHA. Skipped on forks
+    # because their commits don't live under that module path.
+    if: github.repository == 'kubernetes-sigs/kro'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
