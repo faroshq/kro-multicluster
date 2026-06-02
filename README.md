@@ -20,6 +20,49 @@ See [docs/multicluster-setup.md](docs/multicluster-setup.md) and
 [test/e2e/multicluster/README.md](test/e2e/multicluster/README.md) for how to
 try the multicluster mode.
 
+### Installing from the fork
+
+Container image and Helm chart are published to GHCR under
+`ghcr.io/faroshq/kro-multicluster/`:
+
+```bash
+# Helm
+helm install kro \
+  oci://ghcr.io/faroshq/kro-multicluster/charts/kro \
+  --version <TAG> \
+  --namespace kro-system --create-namespace
+
+# or static manifests (attached to each GitHub release)
+kubectl apply -f https://github.com/faroshq/kro-multicluster/releases/download/<TAG>/kro-core-install-manifests.yaml
+```
+
+To enable multicluster mode, pass `--enable-multicluster` to the controller
+(via `--set extraArgs={--enable-multicluster}` in helm, or by editing the
+Deployment). See [docs/multicluster-setup.md](docs/multicluster-setup.md)
+for the cluster-secret discovery contract.
+
+### Cutting a release (fork maintainer)
+
+```bash
+git tag v0.1.0-mc.1
+git push faroshq v0.1.0-mc.1
+```
+
+That tag triggers [.github/workflows/github-release.yaml](.github/workflows/github-release.yaml),
+which on this fork:
+
+1. Builds the controller image with `ko` and pushes
+   `ghcr.io/faroshq/kro-multicluster/kro:<TAG>`
+2. Packages the Helm chart and pushes
+   `oci://ghcr.io/faroshq/kro-multicluster/charts/kro:<TAG>`
+3. Renders static manifests with `image.repository` overridden to the GHCR
+   image, and attaches them to a GitHub Release.
+
+The same workflow can be triggered manually from the Actions tab via
+`workflow_dispatch` for testing. All fork-only steps are gated on
+`github.repository == 'faroshq/kro-multicluster'`, so the workflow stays
+no-op-safe across rebases from upstream.
+
 ---
 
 ## kro | Kube Resource Orchestrator

@@ -2,25 +2,76 @@ name: Create Github Release
 
 permissions:
   contents: write
+  packages: write
 
 on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.1.0-mc.1)"
+        required: true
+        type: string
+
+env:
+  # Fork-specific OCI namespace. The Makefile derives KO_DOCKER_REPO and
+  # HELM_IMAGE from OCI_REPO, so setting this one variable wires both the
+  # controller image and the helm chart to the fork's GHCR namespace.
+  # Upstream publishes to registry.k8s.io via Google Cloud Build, so the
+  # fork-only steps below are gated on github.repository to keep the
+  # workflow no-op-safe for upstream consumption.
+  FORK_OCI_REPO: ghcr.io/faroshq/kro-multicluster
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
-      - name: Build static manifests
+
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        if: github.repository == 'faroshq/kro-multicluster'
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Log in to GHCR
+        if: github.repository == 'faroshq/kro-multicluster'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Build & push controller image to GHCR
+        if: github.repository == 'faroshq/kro-multicluster'
         env:
-          TAG: ${{ github.ref_name}}
+          OCI_REPO: ${{ env.FORK_OCI_REPO }}
         run: |
+          # Pushes ${FORK_OCI_REPO}/kro:${TAG} via ko (see Makefile publish-image).
+          make publish-image RELEASE_VERSION=${TAG}
+
+      - name: Package & push Helm chart to GHCR
+        if: github.repository == 'faroshq/kro-multicluster'
+        env:
+          OCI_REPO: ${{ env.FORK_OCI_REPO }}
+        run: |
+          # Packages helm/ with version=${TAG} and pushes to
+          # oci://${FORK_OCI_REPO}/charts/kro.
+          make package-helm publish-helm RELEASE_VERSION=${TAG}
+
+      - name: Build static manifests
+        run: |
+          # On the fork, override the rendered image.repository so the YAML
+          # bundled with the release pulls from the fork's GHCR. On upstream,
+          # the default (registry.k8s.io/kro/kro from helm/values.yaml) wins.
+          if [ "${{ github.repository }}" = "faroshq/kro-multicluster" ]; then
+            export HELM_STATIC_MANIFEST_IMAGE_FLAGS="--set image.tag=${TAG} --set image.repository=${FORK_OCI_REPO}/kro"
+          fi
           make render-static-manifests RELEASE_VERSION=${TAG}
 
       - uses: softprops/action-gh-release@6da8fa9354ddfdc4aeace5fc48d7f679b5214090 # 2.4.1
         with:
+          tag_name: ${{ env.TAG }}
           generate_release_notes: true
           files: |
             ./manifests/rendered/kro-*.yaml
