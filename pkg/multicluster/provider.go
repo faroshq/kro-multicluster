@@ -19,6 +19,9 @@ import (
 	"context"
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
@@ -27,8 +30,26 @@ import (
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 	"sigs.k8s.io/multicluster-runtime/providers/kubeconfig"
 
+	kcpapisv1alpha1 "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
+	kcpcorev1alpha1 "github.com/kcp-dev/sdk/apis/core/v1alpha1"
+	kcptenancyv1alpha1 "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
+
 	kcpapiexport "github.com/kcp-dev/multicluster-provider/apiexport"
 )
+
+// kcpScheme is a scheme that includes the kcp api types the apiexport
+// provider needs (APIExport, APIBinding, APIExportEndpointSlice,
+// LogicalCluster, Workspace). Built once at init time so we don't pollute
+// kro's main scheme with kcp-specific types in single-cluster / kubeconfig
+// modes.
+func kcpScheme() *runtime.Scheme {
+	s := runtime.NewScheme()
+	utilruntime.Must(scheme.AddToScheme(s))
+	utilruntime.Must(kcpapisv1alpha1.AddToScheme(s))
+	utilruntime.Must(kcpcorev1alpha1.AddToScheme(s))
+	utilruntime.Must(kcptenancyv1alpha1.AddToScheme(s))
+	return s
+}
 
 // ProviderType represents the type of cluster provider to use.
 type ProviderType string
@@ -118,7 +139,9 @@ func NewProvider(opts Options) (*Provider, error) {
 		if err != nil {
 			return nil, fmt.Errorf("loading kcp kubeconfig from %s: %w", opts.KCPKubeconfigPath, err)
 		}
-		p, err := kcpapiexport.New(kcpCfg, opts.KCPAPIExportEndpointSlice, kcpapiexport.Options{})
+		p, err := kcpapiexport.New(kcpCfg, opts.KCPAPIExportEndpointSlice, kcpapiexport.Options{
+			Scheme: kcpScheme(),
+		})
 		if err != nil {
 			return nil, fmt.Errorf("creating kcp-apiexport provider: %w", err)
 		}
