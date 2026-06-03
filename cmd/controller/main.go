@@ -97,9 +97,13 @@ func main() {
 		featureGatesFlag              string
 		// multicluster parameters
 		enableMulticluster       bool
+		multiclusterProvider     string
 		clusterSecretsNamespace  string
 		clusterSecretsLabel      string
 		clusterSecretsKubeconfig string
+		// kcp-apiexport provider parameters
+		kcpKubeconfigPath         string
+		kcpAPIExportEndpointSlice string
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8078", "The address the metric endpoint binds to.")
@@ -180,12 +184,24 @@ func main() {
 	// multicluster flags
 	flag.BoolVar(&enableMulticluster, "enable-multicluster", false,
 		"Enable multicluster mode. When enabled, KRO will discover and manage resources across multiple clusters.")
+	flag.StringVar(&multiclusterProvider, "multicluster-provider", "kubeconfig",
+		"Multicluster provider to use when --enable-multicluster is set. "+
+			"Supported: 'kubeconfig' (labeled secrets on the host cluster) or 'kcp-apiexport' "+
+			"(kcp APIExport virtual workspace; requires --kcp-kubeconfig and --kcp-apiexport-endpointslice).")
+	// kubeconfig provider
 	flag.StringVar(&clusterSecretsNamespace, "cluster-secrets-namespace", "kro-system",
-		"Namespace where cluster kubeconfig secrets are stored (only used when --enable-multicluster is set)")
+		"Namespace where cluster kubeconfig secrets are stored (only used with --multicluster-provider=kubeconfig)")
 	flag.StringVar(&clusterSecretsLabel, "cluster-secrets-label", "kro.run/cluster",
-		"Label used to identify secrets containing kubeconfig data (only used when --enable-multicluster is set)")
+		"Label used to identify secrets containing kubeconfig data (only used with --multicluster-provider=kubeconfig)")
 	flag.StringVar(&clusterSecretsKubeconfig, "cluster-secrets-key", "kubeconfig",
-		"Key in the secret data that contains the kubeconfig (only used when --enable-multicluster is set)")
+		"Key in the secret data that contains the kubeconfig (only used with --multicluster-provider=kubeconfig)")
+	// kcp-apiexport provider
+	flag.StringVar(&kcpKubeconfigPath, "kcp-kubeconfig", "",
+		"Path to a kubeconfig pointing at the kcp shard hosting the APIExport "+
+			"(required when --multicluster-provider=kcp-apiexport)")
+	flag.StringVar(&kcpAPIExportEndpointSlice, "kcp-apiexport-endpointslice", "",
+		"Name of the APIExportEndpointSlice resource in kcp that lists virtual workspace URLs "+
+			"(required when --multicluster-provider=kcp-apiexport)")
 
 	opts := zap.Options{
 		Development: true,
@@ -223,17 +239,33 @@ func main() {
 	// Configure multicluster provider if enabled
 	var mcProvider *multicluster.Provider
 	if enableMulticluster {
-		setupLog.Info("Multicluster mode enabled",
-			"namespace", clusterSecretsNamespace,
-			"label", clusterSecretsLabel,
-			"key", clusterSecretsKubeconfig)
+		mcOpts := multicluster.Options{}
+		switch multiclusterProvider {
+		case string(multicluster.ProviderTypeKubeconfig):
+			mcOpts.Type = multicluster.ProviderTypeKubeconfig
+			mcOpts.KubeconfigNamespace = clusterSecretsNamespace
+			mcOpts.KubeconfigSecretLabel = clusterSecretsLabel
+			mcOpts.KubeconfigSecretKey = clusterSecretsKubeconfig
+			setupLog.Info("Multicluster mode enabled",
+				"provider", multiclusterProvider,
+				"namespace", clusterSecretsNamespace,
+				"label", clusterSecretsLabel,
+				"key", clusterSecretsKubeconfig)
+		case string(multicluster.ProviderTypeKCPAPIExport):
+			mcOpts.Type = multicluster.ProviderTypeKCPAPIExport
+			mcOpts.KCPKubeconfigPath = kcpKubeconfigPath
+			mcOpts.KCPAPIExportEndpointSlice = kcpAPIExportEndpointSlice
+			setupLog.Info("Multicluster mode enabled",
+				"provider", multiclusterProvider,
+				"kcpKubeconfig", kcpKubeconfigPath,
+				"endpointSlice", kcpAPIExportEndpointSlice)
+		default:
+			setupLog.Error(nil, "unknown --multicluster-provider", "value", multiclusterProvider,
+				"supported", []string{"kubeconfig", "kcp-apiexport"})
+			os.Exit(1)
+		}
 
-		mcProvider, err = multicluster.NewProvider(multicluster.Options{
-			Type:                  multicluster.ProviderTypeKubeconfig,
-			KubeconfigNamespace:   clusterSecretsNamespace,
-			KubeconfigSecretLabel: clusterSecretsLabel,
-			KubeconfigSecretKey:   clusterSecretsKubeconfig,
-		})
+		mcProvider, err = multicluster.NewProvider(mcOpts)
 		if err != nil {
 			setupLog.Error(err, "unable to create multicluster provider")
 			os.Exit(1)

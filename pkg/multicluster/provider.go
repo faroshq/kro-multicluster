@@ -20,11 +20,14 @@ import (
 	"fmt"
 
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 
 	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 	"sigs.k8s.io/multicluster-runtime/providers/kubeconfig"
+
+	kcpapiexport "github.com/kcp-dev/multicluster-provider/apiexport"
 )
 
 // ProviderType represents the type of cluster provider to use.
@@ -36,6 +39,10 @@ const (
 
 	// ProviderTypeKubeconfig uses secrets containing kubeconfig data.
 	ProviderTypeKubeconfig ProviderType = "kubeconfig"
+
+	// ProviderTypeKCPAPIExport uses kcp APIExport virtual workspaces to
+	// surface each logical cluster bound to a given APIExport as a member.
+	ProviderTypeKCPAPIExport ProviderType = "kcp-apiexport"
 )
 
 // Options configures the multicluster provider.
@@ -43,13 +50,22 @@ type Options struct {
 	// Type specifies the provider type to use.
 	Type ProviderType
 
-	// Kubeconfig provider options
-	// Namespace is the namespace where cluster kubeconfig secrets are stored.
+	// Kubeconfig provider options.
+	// KubeconfigNamespace is the namespace where cluster kubeconfig secrets are stored.
 	KubeconfigNamespace string
 	// KubeconfigSecretLabel is the label used to identify secrets containing kubeconfig data.
 	KubeconfigSecretLabel string
 	// KubeconfigSecretKey is the key in the secret data that contains the kubeconfig.
 	KubeconfigSecretKey string
+
+	// KCP APIExport provider options.
+	// KCPKubeconfigPath is the path to a kubeconfig pointing at the kcp shard
+	// that hosts the APIExport. Required for ProviderTypeKCPAPIExport.
+	KCPKubeconfigPath string
+	// KCPAPIExportEndpointSlice is the name of the APIExportEndpointSlice
+	// resource in kcp that lists the virtual workspace URLs the provider
+	// watches. Required for ProviderTypeKCPAPIExport.
+	KCPAPIExportEndpointSlice string
 
 	// ClusterOptions are options to pass to each cluster.
 	ClusterOptions []cluster.Option
@@ -91,6 +107,22 @@ func NewProvider(opts Options) (*Provider, error) {
 			ClusterOptions:        opts.ClusterOptions,
 			RESTOptions:           opts.RESTOptions,
 		})
+	case ProviderTypeKCPAPIExport:
+		if opts.KCPKubeconfigPath == "" {
+			return nil, fmt.Errorf("kcp-apiexport provider requires --kcp-kubeconfig")
+		}
+		if opts.KCPAPIExportEndpointSlice == "" {
+			return nil, fmt.Errorf("kcp-apiexport provider requires --kcp-apiexport-endpointslice")
+		}
+		kcpCfg, err := clientcmd.BuildConfigFromFlags("", opts.KCPKubeconfigPath)
+		if err != nil {
+			return nil, fmt.Errorf("loading kcp kubeconfig from %s: %w", opts.KCPKubeconfigPath, err)
+		}
+		p, err := kcpapiexport.New(kcpCfg, opts.KCPAPIExportEndpointSlice, kcpapiexport.Options{})
+		if err != nil {
+			return nil, fmt.Errorf("creating kcp-apiexport provider: %w", err)
+		}
+		provider = p
 	default:
 		return nil, fmt.Errorf("unknown provider type: %s", opts.Type)
 	}
@@ -138,5 +170,5 @@ func (p *Provider) Get(ctx context.Context, clusterName string) (cluster.Cluster
 	if p == nil || p.provider == nil {
 		return nil, multicluster.ErrClusterNotFound
 	}
-	return p.provider.Get(ctx, clusterName)
+	return p.provider.Get(ctx, multicluster.ClusterName(clusterName))
 }

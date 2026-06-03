@@ -76,7 +76,7 @@ func (m *kroManager) IsMulticluster() bool {
 	return m.provider != nil && m.provider.IsMulticluster()
 }
 
-func (m *kroManager) GetCluster(ctx context.Context, clusterName string) (cluster.Cluster, error) {
+func (m *kroManager) GetCluster(ctx context.Context, clusterName multicluster.ClusterName) (cluster.Cluster, error) {
 	return m.Manager.GetCluster(ctx, clusterName)
 }
 

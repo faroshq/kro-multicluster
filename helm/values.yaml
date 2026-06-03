@@ -196,9 +196,32 @@ config:
 # on with `multicluster.enabled: true` is the only required value.
 multicluster:
   enabled: false
+  # provider selects the cluster-discovery backend used when enabled.
+  # Supported:
+  #   - kubeconfig     watches labeled secrets on the host cluster carrying
+  #                    kubeconfig data for each member cluster (default)
+  #   - kcp-apiexport  treats kcp as the host and each kcp logical cluster
+  #                    bound to an APIExport as a member; requires the
+  #                    kcp.* block below
+  provider: kubeconfig
+
+  # kubeconfig provider config (only used when provider == kubeconfig).
   clusterSecretsNamespace: kro-system
   clusterSecretsLabel: kro.run/cluster
   clusterSecretsKey: kubeconfig
+
+  # kcp-apiexport provider config (only used when provider == kcp-apiexport).
+  kcp:
+    # Path inside the controller container where the kcp kubeconfig is
+    # mounted. Combine with `kcp.kubeconfigSecret` to mount a Secret at
+    # this location, or pre-mount it yourself and just set this path.
+    kubeconfigPath: /etc/kro/kcp/kubeconfig
+    # Name of a Secret (in the release namespace) holding the kcp
+    # kubeconfig under key `kubeconfig`. When set, the chart mounts it at
+    # kcp.kubeconfigPath. Leave empty to mount it yourself.
+    kubeconfigSecret: ""
+    # Name of the APIExportEndpointSlice resource in kcp.
+    apiExportEndpointSlice: ""
 
 controller:
   # extraArgs is a generic escape hatch: each entry is appended to the

@@ -107,7 +107,8 @@ func NewMulticlusterDynamicController(
 // Engage implements multicluster.Aware.
 // It is called when a new cluster should be watched.
 // The context is tied to the cluster's lifecycle and will be cancelled when the cluster is removed.
-func (mdc *MulticlusterDynamicController) Engage(ctx context.Context, clusterName string, cl cluster.Cluster) error {
+func (mdc *MulticlusterDynamicController) Engage(ctx context.Context, clusterNameTyped mcmulticluster.ClusterName, cl cluster.Cluster) error {
+	clusterName := string(clusterNameTyped)
 	mdc.mu.Lock()
 	defer mdc.mu.Unlock()
 

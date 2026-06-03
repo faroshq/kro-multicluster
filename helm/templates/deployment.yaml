@@ -178,18 +178,23 @@ spec:
             - ":{{ $pprofPort }}"
             {{- end }}
             {{- /*
-              Multicluster mode (this fork only). The flags are mutually
-              dependent: --enable-multicluster turns the discovery loop on
-              and the three --cluster-secrets-* flags configure where + how
-              kubeconfig Secrets are found. Defaults match the controller's
-              own defaults so callers only need to set
-              `multicluster.enabled: true` to opt in.
+              Multicluster mode (this fork only). --enable-multicluster turns
+              the discovery loop on; --multicluster-provider picks the backend
+              and the per-provider flags below configure it. Defaults match
+              the controller's own defaults so opting in with provider=kubeconfig
+              is a single `multicluster.enabled: true`.
             */}}
             {{- if .Values.multicluster.enabled }}
             - --enable-multicluster
+            - --multicluster-provider={{ .Values.multicluster.provider }}
+            {{- if eq .Values.multicluster.provider "kubeconfig" }}
             - --cluster-secrets-namespace={{ .Values.multicluster.clusterSecretsNamespace }}
             - --cluster-secrets-label={{ .Values.multicluster.clusterSecretsLabel }}
             - --cluster-secrets-key={{ .Values.multicluster.clusterSecretsKey }}
+            {{- else if eq .Values.multicluster.provider "kcp-apiexport" }}
+            - --kcp-kubeconfig={{ .Values.multicluster.kcp.kubeconfigPath }}
+            - --kcp-apiexport-endpointslice={{ required "multicluster.kcp.apiExportEndpointSlice is required when provider=kcp-apiexport" .Values.multicluster.kcp.apiExportEndpointSlice }}
+            {{- end }}
             {{- end }}
             {{- /*
               extraArgs is the generic escape hatch for flags the chart
@@ -211,6 +216,26 @@ spec:
               port: 8079
             initialDelaySeconds: 10
             periodSeconds: 10
+          {{- /*
+            Mount the kcp kubeconfig Secret at the path the controller
+            expects. Only applies when the kcp-apiexport provider is in
+            use AND multicluster.kcp.kubeconfigSecret is non-empty.
+          */}}
+          {{- if and .Values.multicluster.enabled (eq .Values.multicluster.provider "kcp-apiexport") .Values.multicluster.kcp.kubeconfigSecret }}
+          volumeMounts:
+            - name: kcp-kubeconfig
+              mountPath: {{ dir .Values.multicluster.kcp.kubeconfigPath }}
+              readOnly: true
+          {{- end }}
+      {{- if and .Values.multicluster.enabled (eq .Values.multicluster.provider "kcp-apiexport") .Values.multicluster.kcp.kubeconfigSecret }}
+      volumes:
+        - name: kcp-kubeconfig
+          secret:
+            secretName: {{ .Values.multicluster.kcp.kubeconfigSecret }}
+            items:
+              - key: kubeconfig
+                path: {{ base .Values.multicluster.kcp.kubeconfigPath }}
+      {{- end }}
       {{- with .Values.deployment.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

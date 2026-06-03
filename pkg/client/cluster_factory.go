@@ -126,7 +126,8 @@ func (f *ClusterClientFactory) GetRESTMapper(clusterName string) (meta.RESTMappe
 // Engage implements multicluster.Aware.
 // It is called when a new cluster should be watched.
 // The context is tied to the cluster's lifecycle and will be cancelled when the cluster is removed.
-func (f *ClusterClientFactory) Engage(ctx context.Context, clusterName string, cl cluster.Cluster) error {
+func (f *ClusterClientFactory) Engage(ctx context.Context, clusterNameTyped mcmulticluster.ClusterName, cl cluster.Cluster) error {
+	clusterName := string(clusterNameTyped)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
