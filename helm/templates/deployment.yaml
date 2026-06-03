@@ -177,6 +177,28 @@ spec:
             - --pprof-bind-address
             - ":{{ $pprofPort }}"
             {{- end }}
+            {{- /*
+              Multicluster mode (this fork only). The flags are mutually
+              dependent: --enable-multicluster turns the discovery loop on
+              and the three --cluster-secrets-* flags configure where + how
+              kubeconfig Secrets are found. Defaults match the controller's
+              own defaults so callers only need to set
+              `multicluster.enabled: true` to opt in.
+            */}}
+            {{- if .Values.multicluster.enabled }}
+            - --enable-multicluster
+            - --cluster-secrets-namespace={{ .Values.multicluster.clusterSecretsNamespace }}
+            - --cluster-secrets-label={{ .Values.multicluster.clusterSecretsLabel }}
+            - --cluster-secrets-key={{ .Values.multicluster.clusterSecretsKey }}
+            {{- end }}
+            {{- /*
+              extraArgs is the generic escape hatch for flags the chart
+              doesn't surface as first-class values. Avoids forking the
+              chart every time the controller grows a new flag.
+            */}}
+            {{- with .Values.controller.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz

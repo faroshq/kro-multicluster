@@ -184,6 +184,33 @@ config:
   #     CELOmitFunction: true
   featureGates: {}
 
+# Multicluster mode (this fork only).
+#
+# When enabled, KRO discovers additional clusters via kubeconfig
+# Secrets in `multicluster.clusterSecretsNamespace`, labeled
+# `multicluster.clusterSecretsLabel=true`, carrying the YAML under
+# Secret.data[multicluster.clusterSecretsKey].
+# See docs/multicluster-setup.md for the full story.
+#
+# Defaults mirror the controller's own defaults — turning the feature
+# on with `multicluster.enabled: true` is the only required value.
+multicluster:
+  enabled: false
+  clusterSecretsNamespace: kro-system
+  clusterSecretsLabel: kro.run/cluster
+  clusterSecretsKey: kubeconfig
+
+controller:
+  # extraArgs is a generic escape hatch: each entry is appended to the
+  # controller container's args list verbatim. Use it for flags the
+  # chart doesn't surface as first-class values so you don't have to
+  # fork the chart for one-off experiments.
+  #
+  # Example:
+  #   extraArgs:
+  #     - --some-new-flag=value
+  extraArgs: []
+
 metrics:
   service:
     # Set to true to automatically create a Kubernetes Service resource for the

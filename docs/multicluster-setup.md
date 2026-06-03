@@ -44,15 +44,31 @@ go run ./cmd/controller \
 
 ### Helm Values
 
-If using Helm to deploy KRO, add these values:
+If using Helm to deploy KRO, set:
+
+```yaml
+multicluster:
+  enabled: true
+  # All three below default to the values shown — only set them to
+  # override the defaults.
+  # clusterSecretsNamespace: kro-system
+  # clusterSecretsLabel: kro.run/cluster
+  # clusterSecretsKey: kubeconfig
+```
+
+…or from the CLI:
+
+```bash
+helm install kro oci://ghcr.io/faroshq/kro-multicluster/charts/kro/kro \
+  --set multicluster.enabled=true
+```
+
+For any flag the chart doesn't surface, use `controller.extraArgs`:
 
 ```yaml
 controller:
-  args:
-    - --enable-multicluster
-    - --cluster-secrets-namespace=kro-system
-    - --cluster-secrets-label=kro.run/cluster
-    - --cluster-secrets-key=kubeconfig
+  extraArgs:
+    - --some-new-controller-flag=value
 ```
 
 ## Registering Clusters
