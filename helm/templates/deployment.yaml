@@ -195,6 +195,16 @@ spec:
             - --kcp-kubeconfig={{ .Values.multicluster.kcp.kubeconfigPath }}
             - --kcp-apiexport-endpointslice={{ required "multicluster.kcp.apiExportEndpointSlice is required when provider=kcp-apiexport" .Values.multicluster.kcp.apiExportEndpointSlice }}
             {{- end }}
+            {{- /*
+              Control-plane / data-plane split: materialize an instance's
+              child resources on the local/host runtime cluster while the
+              instance object + its status stay on the cluster it lives on
+              (e.g. a kcp workspace surfaced via the kcp-apiexport provider).
+              Only meaningful with a multicluster provider.
+            */}}
+            {{- if .Values.controller.deployToLocalRuntime }}
+            - --deploy-to-local-runtime
+            {{- end }}
             {{- end }}
             {{- /*
               extraArgs is the generic escape hatch for flags the chart

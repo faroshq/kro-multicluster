@@ -224,6 +224,14 @@ multicluster:
     apiExportEndpointSlice: ""
 
 controller:
+  # deployToLocalRuntime enables the control-plane / data-plane split: an
+  # instance's child resources are materialized on the local/host runtime
+  # cluster, while the instance object and its status stay on the cluster
+  # it lives on (e.g. a kcp workspace surfaced via the kcp-apiexport
+  # provider). Only meaningful with a multicluster provider. Maps to the
+  # controller's --deploy-to-local-runtime flag.
+  deployToLocalRuntime: false
+
   # extraArgs is a generic escape hatch: each entry is appended to the
   # controller container's args list verbatim. Use it for flags the
   # chart doesn't surface as first-class values so you don't have to
