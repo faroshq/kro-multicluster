@@ -129,7 +129,7 @@ func (c *Controller) listCollectionItems(
 	)
 
 	// List across all namespaces - collection items may span namespaces
-	list, err := rcx.Client.Resource(gvr).List(rcx.Ctx, metav1.ListOptions{
+	list, err := rcx.ResourceClient.Resource(gvr).List(rcx.Ctx, metav1.ListOptions{
 		LabelSelector: selector,
 	})
 	if err != nil {

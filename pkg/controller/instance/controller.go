@@ -61,6 +61,16 @@ type ReconcileConfig struct {
 	DeletionPolicy string
 	// RGDConfig holds RGD runtime configuration parameters.
 	RGDConfig graph.RGDConfig
+	// DeployToLocalRuntime, when true, materializes an instance's child
+	// resources on the local/host (runtime) cluster instead of the
+	// cluster the instance lives on. This supports a control-plane /
+	// data-plane split: instances (and their status) live on a remote
+	// cluster (e.g. a kcp workspace surfaced via the apiexport provider),
+	// while the actual workloads run on the local runtime cluster (e.g.
+	// kind). The instance read + status writes stay on the instance's
+	// cluster; only child apply / prune / external-ref reads are
+	// redirected. No-op for the local cluster itself.
+	DeployToLocalRuntime bool
 }
 
 // GraphRevisionResolver resolves compiled graph revisions for a single RGD.
@@ -286,6 +296,23 @@ func (c *Controller) Reconcile(ctx context.Context, clusterName string, req ctrl
 		inst,
 	)
 	rcx.Watcher = watcher
+
+	// Control-plane / data-plane split: when configured, redirect child
+	// resource apply / prune / external-ref reads to the local runtime
+	// cluster, while the instance read + status writes stay on its own
+	// (remote) cluster via rcx.Client. Child-resource events can't route
+	// cross-cluster today, so status refresh rides the periodic requeue
+	// (NoopInstanceWatcher) rather than being child-event-driven.
+	if c.reconcileConfig.DeployToLocalRuntime && clusterName != kroclient.LocalClusterName {
+		runtimeClients, rerr := c.clientFactory.GetClients(kroclient.LocalClusterName)
+		if rerr != nil {
+			log.Error(rerr, "failed to get local runtime clients for data-plane split")
+			return rerr
+		}
+		rcx.ResourceClient = runtimeClients.Dynamic
+		rcx.ResourceMapper = runtimeClients.RESTMapper
+		rcx.Watcher = dynamiccontroller.NoopInstanceWatcher{}
+	}
 
 	//--------------------------------------------------------------
 	// 4. Handle deletion: clean up children and status

@@ -86,11 +86,11 @@ func (c *Controller) observeExternalCollection(
 
 	var list *unstructured.UnstructuredList
 	if ns != "" {
-		list, err = rcx.Client.Resource(nodeMeta.GVR).Namespace(ns).List(rcx.Ctx, metav1.ListOptions{
+		list, err = rcx.ResourceClient.Resource(nodeMeta.GVR).Namespace(ns).List(rcx.Ctx, metav1.ListOptions{
 			LabelSelector: selector.String(),
 		})
 	} else {
-		list, err = rcx.Client.Resource(nodeMeta.GVR).List(rcx.Ctx, metav1.ListOptions{
+		list, err = rcx.ResourceClient.Resource(nodeMeta.GVR).List(rcx.Ctx, metav1.ListOptions{
 			LabelSelector: selector.String(),
 		})
 	}

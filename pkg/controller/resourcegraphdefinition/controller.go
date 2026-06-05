@@ -59,6 +59,11 @@ type Config struct {
 	MaxConcurrentReconciles int
 	MaxGraphRevisions       int
 	RGDConfig               graph.RGDConfig
+	// DeployToLocalRuntime propagates to each instance micro-controller's
+	// ReconcileConfig. When true, instance child resources are applied to
+	// the local/host runtime cluster while instances + status remain on
+	// their own cluster. See instance.ReconcileConfig.DeployToLocalRuntime.
+	DeployToLocalRuntime bool
 }
 
 // ResourceGraphDefinitionReconciler reconciles a ResourceGraphDefinition object

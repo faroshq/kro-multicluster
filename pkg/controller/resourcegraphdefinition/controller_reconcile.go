@@ -200,6 +200,7 @@ func (r *ResourceGraphDefinitionReconciler) setupMicroController(
 			DeletionGraceTimeDuration: 30 * time.Second,
 			DeletionPolicy:            "Delete",
 			RGDConfig:                 r.cfg.RGDConfig,
+			DeployToLocalRuntime:      r.cfg.DeployToLocalRuntime,
 		},
 		gvr,
 		r.revisionsRegistry.ResolverForRGD(rgd.Name),

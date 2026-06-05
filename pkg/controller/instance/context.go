@@ -41,7 +41,19 @@ type ReconcileContext struct {
 	Namespaced bool
 	Client     dynamic.Interface
 	RestMapper meta.RESTMapper
-	Labeler    metadata.Labeler
+
+	// ResourceClient / ResourceMapper target the cluster where the
+	// instance's child resources are materialized. By default they alias
+	// Client / RestMapper (the instance's own cluster), preserving
+	// single-cluster behavior. When the controller is configured to
+	// deploy to a separate runtime cluster (e.g. kcp instance, kind
+	// workloads), the controller overrides these after construction so
+	// child apply / prune / external-ref reads hit the runtime cluster
+	// while the instance + its status stay on Client.
+	ResourceClient dynamic.Interface
+	ResourceMapper meta.RESTMapper
+
+	Labeler metadata.Labeler
 
 	Runtime  runtime.Interface
 	Instance *unstructured.Unstructured
@@ -86,7 +98,12 @@ func NewReconcileContext(
 		Namespaced:   namespaced,
 		Client:       client,
 		RestMapper:   restMapper,
-		Labeler:      labeler,
+		// Default the resource (runtime) clients to the instance's own
+		// cluster. The controller overrides these when deploying child
+		// resources to a separate runtime cluster.
+		ResourceClient: client,
+		ResourceMapper: restMapper,
+		Labeler:        labeler,
 		Runtime:      rt,
 		Instance:     instance,
 		Config:       config,

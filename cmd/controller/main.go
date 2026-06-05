@@ -80,6 +80,7 @@ func main() {
 		rateLimit     int
 		burstLimit    int
 		// reconciler parameters
+		deployToLocalRuntime    bool
 		instanceRequeueInterval time.Duration
 		resyncPeriod            int
 		queueMaxRetries         int
@@ -126,6 +127,11 @@ func main() {
 			"leader election. By default it will try to use the namespace of the service account mounted"+
 			" to the controller pod.")
 	flag.BoolVar(&allowCRDDeletion, "allow-crd-deletion", false, "allow kro to delete CRDs")
+	flag.BoolVar(&deployToLocalRuntime, "deploy-to-local-runtime", false,
+		"materialize instance child resources on the local/host runtime cluster instead of the "+
+			"cluster the instance lives on. Enables a control-plane/data-plane split: instances + "+
+			"status stay on their (remote) cluster, workloads run locally. Intended for the "+
+			"kcp-apiexport provider where instances live in kcp workspaces and workloads run on the host.")
 	flag.DurationVar(&gracefulShutdownTimeout, "graceful-shutdown-timeout", 60*time.Second,
 		"maximum duration to wait for the controller manager to gracefully shutdown")
 	flag.IntVar(&resourceGraphDefinitionConcurrentReconciles,
@@ -350,6 +356,7 @@ func main() {
 			ProgressRequeueDelay:    rgdProgressRequeueDelay,
 			MaxConcurrentReconciles: resourceGraphDefinitionConcurrentReconciles,
 			MaxGraphRevisions:       rgdMaxGraphRevisions,
+			DeployToLocalRuntime:    deployToLocalRuntime,
 			RGDConfig: graph.RGDConfig{
 				MaxCollectionSize:          rgdMaxCollectionSize,
 				MaxCollectionDimensionSize: rgdMaxCollectionDimensionSize,

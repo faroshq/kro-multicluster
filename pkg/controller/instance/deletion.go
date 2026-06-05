@@ -238,9 +238,9 @@ func resourceClientFor(
 	namespace string,
 ) dynamic.ResourceInterface {
 	if desc.Namespaced {
-		return rcx.Client.Resource(desc.GVR).Namespace(namespace)
+		return rcx.ResourceClient.Resource(desc.GVR).Namespace(namespace)
 	}
-	return rcx.Client.Resource(desc.GVR)
+	return rcx.ResourceClient.Resource(desc.GVR)
 }
 
 // setUnmanaged removes the instance finalizer using JSON merge patch with retry on conflict.

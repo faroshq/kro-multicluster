@@ -318,8 +318,8 @@ func (c *Controller) pruneOrphans(
 // createApplySet constructs an applyset configured for the current instance.
 func (c *Controller) createApplySet(rcx *ReconcileContext) *applyset.ApplySet {
 	cfg := applyset.Config{
-		Client:          rcx.Client,
-		RESTMapper:      rcx.RestMapper,
+		Client:          rcx.ResourceClient,
+		RESTMapper:      rcx.ResourceMapper,
 		Log:             rcx.Log,
 		ParentNamespace: rcx.Instance.GetNamespace(),
 	}
