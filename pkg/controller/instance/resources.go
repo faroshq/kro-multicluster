@@ -409,6 +409,13 @@ func (c *Controller) processRegularNode(
 	}
 	desired := desiredList[0]
 
+	// Isolate namespaced children per source cluster when deploying to a shared
+	// runtime cluster. Must happen before watch/get/apply so all subsequent
+	// operations target the per-tenant namespace.
+	if err := c.localizeChildNamespace(rcx, desired); err != nil {
+		return nil, errorState(err), err
+	}
+
 	// Register watch BEFORE operating on the resource to avoid event gaps.
 	requestWatch(rcx, id, nodeMeta.GVR, desired.GetName(), desired.GetNamespace())
 
@@ -487,6 +494,64 @@ func (c *Controller) applyDecoratorLabels(
 	}
 
 	obj.SetLabels(labels)
+}
+
+// runtimeNamespaceGVR targets core/v1 Namespaces on the runtime cluster.
+var runtimeNamespaceGVR = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "namespaces"}
+
+// tenantNamespace returns the namespace a child resource should use on the
+// runtime cluster. When the control-plane/data-plane split is active, namespaced
+// children are isolated per source cluster (kcp logical cluster) so multiple
+// tenants sharing one runtime cluster don't collide: "<sourceCluster>-<namespace>".
+// Returns ns unchanged when the split is inactive or the child is cluster-scoped.
+func (c *Controller) tenantNamespace(rcx *ReconcileContext, ns string) string {
+	if !rcx.Config.DeployToLocalRuntime || rcx.ClusterName == "" || ns == "" {
+		return ns
+	}
+	return rcx.ClusterName + "-" + ns
+}
+
+// localizeChildNamespace rewrites a namespaced child object's namespace to its
+// per-tenant runtime namespace (see tenantNamespace) and ensures that namespace
+// exists on the runtime cluster. No-op when the split is inactive or the child
+// is cluster-scoped. Used on the apply path; the deletion path remaps via
+// tenantNamespace without creating namespaces.
+func (c *Controller) localizeChildNamespace(rcx *ReconcileContext, obj *unstructured.Unstructured) error {
+	mapped := c.tenantNamespace(rcx, obj.GetNamespace())
+	if mapped == obj.GetNamespace() {
+		return nil
+	}
+	if err := c.ensureRuntimeNamespace(rcx, mapped); err != nil {
+		return err
+	}
+	obj.SetNamespace(mapped)
+	return nil
+}
+
+// ensureRuntimeNamespace creates the given namespace on the runtime cluster if
+// absent. Idempotent. The namespace is labeled with the source cluster for
+// traceability of which tenant owns it.
+func (c *Controller) ensureRuntimeNamespace(rcx *ReconcileContext, name string) error {
+	if _, err := rcx.ResourceClient.Resource(runtimeNamespaceGVR).Get(rcx.Ctx, name, metav1.GetOptions{}); err == nil {
+		return nil
+	} else if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("get runtime namespace %q: %w", name, err)
+	}
+	nsObj := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "Namespace",
+		"metadata": map[string]interface{}{
+			"name": name,
+			"labels": map[string]interface{}{
+				"app.kubernetes.io/managed-by": "kro",
+				"kro.run/source-cluster":       rcx.ClusterName,
+			},
+		},
+	}}
+	if _, err := rcx.ResourceClient.Resource(runtimeNamespaceGVR).Create(rcx.Ctx, nsObj, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("create runtime namespace %q: %w", name, err)
+	}
+	return nil
 }
 
 // patchInstanceWithApplySetMetadata applies applyset metadata to the parent instance.

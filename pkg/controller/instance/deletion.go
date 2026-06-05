@@ -141,8 +141,11 @@ func (c *Controller) planNodesForDeletion(
 
 		case graph.NodeTypeResource:
 			// Single resources delete by identity; GET the object to mark observed and
-			// allow DeleteTargets to return the correct target.
+			// allow DeleteTargets to return the correct target. Remap to the
+			// per-tenant runtime namespace so we locate (and delete) the object
+			// where it was actually applied. No ensure-namespace on the delete path.
 			obj := desired[0]
+			obj.SetNamespace(c.tenantNamespace(rcx, obj.GetNamespace()))
 			rc := resourceClientFor(rcx, nodeMeta, obj.GetNamespace())
 			observed, err := rc.Get(rcx.Ctx, obj.GetName(), metav1.GetOptions{})
 			if err != nil {

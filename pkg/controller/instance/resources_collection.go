@@ -59,6 +59,15 @@ func (c *Controller) processCollectionNode(
 		return nil, readyState(), nil
 	}
 
+	// Isolate namespaced items per source cluster before any namespace/name keying
+	// below, so desired items align with the per-tenant namespaces the LISTed
+	// current items already live in on the runtime cluster.
+	for _, expandedResource := range expandedResources {
+		if err := c.localizeChildNamespace(rcx, expandedResource); err != nil {
+			return nil, errorState(err), err
+		}
+	}
+
 	// Build lookup map for current items keyed by namespace/name.
 	existingByKey := make(map[string]*unstructured.Unstructured, len(existingItems))
 	for _, current := range existingItems {
