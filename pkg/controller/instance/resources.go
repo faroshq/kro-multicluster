@@ -517,6 +517,13 @@ func (c *Controller) tenantNamespace(rcx *ReconcileContext, ns string) string {
 // is cluster-scoped. Used on the apply path; the deletion path remaps via
 // tenantNamespace without creating namespaces.
 func (c *Controller) localizeChildNamespace(rcx *ReconcileContext, obj *unstructured.Unstructured) error {
+	// Keep RBAC binding subjects pointing at their ServiceAccounts once both are
+	// isolated into the tenant namespace. This is independent of the binding's own
+	// namespace remap below (and must run for cluster-scoped ClusterRoleBindings too).
+	if err := c.localizeBindingSubjects(rcx, obj); err != nil {
+		return err
+	}
+
 	mapped := c.tenantNamespace(rcx, obj.GetNamespace())
 	if mapped == obj.GetNamespace() {
 		return nil
@@ -526,6 +533,45 @@ func (c *Controller) localizeChildNamespace(rcx *ReconcileContext, obj *unstruct
 	}
 	obj.SetNamespace(mapped)
 	return nil
+}
+
+// localizeBindingSubjects rewrites ServiceAccount subject namespaces in
+// (Cluster)RoleBindings to their per-tenant runtime namespace, matching the
+// remapping applied to the objects themselves (see tenantNamespace). Without
+// this, a binding authored to grant a "default" ServiceAccount would still
+// reference "default" after that ServiceAccount is moved to the tenant
+// namespace, silently granting no access. No-op when the split is inactive or
+// the object is not an RBAC binding.
+func (c *Controller) localizeBindingSubjects(rcx *ReconcileContext, obj *unstructured.Unstructured) error {
+	gk := obj.GroupVersionKind().GroupKind()
+	if gk.Group != "rbac.authorization.k8s.io" || (gk.Kind != "RoleBinding" && gk.Kind != "ClusterRoleBinding") {
+		return nil
+	}
+	subjects, found, err := unstructured.NestedSlice(obj.Object, "subjects")
+	if err != nil || !found {
+		return err
+	}
+	changed := false
+	for i, s := range subjects {
+		subj, ok := s.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if subj["kind"] != "ServiceAccount" {
+			continue
+		}
+		ns, _ := subj["namespace"].(string)
+		mapped := c.tenantNamespace(rcx, ns)
+		if mapped != ns {
+			subj["namespace"] = mapped
+			subjects[i] = subj
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return unstructured.SetNestedSlice(obj.Object, subjects, "subjects")
 }
 
 // ensureRuntimeNamespace creates the given namespace on the runtime cluster if
